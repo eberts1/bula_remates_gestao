@@ -12,6 +12,7 @@ const PROTECTED_PREFIXES = [
   '/clients',
   '/collaborators',
   '/documents',
+  '/admin',
 ];
 
 
@@ -85,6 +86,10 @@ export const config = {
     '/clients/:path*',
 
     '/collaborators/:path*',
+
+    '/admin',
+
+    '/admin/:path*',
 
     '/cadastro/:path*',
 

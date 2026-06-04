@@ -9,6 +9,7 @@ import * as bcrypt from 'bcrypt';
 import { v4 as uuidv4 } from 'uuid';
 import { PrismaService } from '../prisma/prisma.service';
 import { RedisService } from '../redis/redis.service';
+import { AuditService } from '../audit/audit.service';
 import { AuthResponse, AuthTokens, JwtPayload } from './auth.types';
 import { LoginDto } from './dto/login.dto';
 import { RegisterDto } from './dto/register.dto';
@@ -22,6 +23,7 @@ export class AuthService {
     private readonly prisma: PrismaService,
     private readonly jwt: JwtService,
     private readonly redis: RedisService,
+    private readonly audit: AuditService,
     config: ConfigService,
   ) {
     this.refreshTtlSeconds = Number(config.get('JWT_REFRESH_TTL_SECONDS', 604800));
@@ -83,6 +85,7 @@ export class AuthService {
       email: result.user.email,
       tenantId: result.tenant.id,
       role: 'owner',
+      isSuperAdmin: result.user.isSuperAdmin,
     });
 
     return {
@@ -100,7 +103,10 @@ export class AuthService {
     };
   }
 
-  async login(dto: LoginDto): Promise<AuthResponse> {
+  async login(
+    dto: LoginDto,
+    ctx?: { ip?: string; userAgent?: string },
+  ): Promise<AuthResponse> {
     const user = await this.prisma.user.findUnique({
       where: { email: dto.email },
       include: {
@@ -113,11 +119,29 @@ export class AuthService {
     });
 
     if (!user) {
+      void this.audit.log({
+        action: 'auth.login.failed',
+        actorEmail: dto.email,
+        summary: `Login falhou: e-mail não encontrado (${dto.email})`,
+        metadata: { email: dto.email },
+        ip: ctx?.ip,
+        userAgent: ctx?.userAgent,
+      });
       throw new UnauthorizedException('Credenciais inválidas');
     }
 
     const valid = await bcrypt.compare(dto.password, user.passwordHash);
     if (!valid) {
+      void this.audit.log({
+        tenantId: user.memberships[0]?.tenantId,
+        userId: user.id,
+        actorEmail: dto.email,
+        action: 'auth.login.failed',
+        summary: `Login falhou: senha inválida (${dto.email})`,
+        metadata: { email: dto.email },
+        ip: ctx?.ip,
+        userAgent: ctx?.userAgent,
+      });
       throw new UnauthorizedException('Credenciais inválidas');
     }
 
@@ -126,11 +150,24 @@ export class AuthService {
       throw new UnauthorizedException('Usuário sem empresa vinculada');
     }
 
+    void this.audit.log({
+      tenantId: membership.tenantId,
+      userId: user.id,
+      actorEmail: user.email,
+      action: 'auth.login.success',
+      entityType: 'user',
+      entityId: user.id,
+      summary: `Login realizado por ${user.email}`,
+      ip: ctx?.ip,
+      userAgent: ctx?.userAgent,
+    });
+
     const tokens = await this.issueTokens({
       sub: user.id,
       email: user.email,
       tenantId: membership.tenantId,
       role: membership.role,
+      isSuperAdmin: user.isSuperAdmin,
     });
 
     return {
@@ -164,6 +201,7 @@ export class AuthService {
       tenantId: string;
       role: string;
       email: string;
+      isSuperAdmin: boolean;
     };
 
     await this.redis.getClient().del(`refresh:${payload.jti}`);
@@ -173,6 +211,7 @@ export class AuthService {
       email: session.email,
       tenantId: session.tenantId,
       role: session.role as JwtPayload['role'],
+      isSuperAdmin: session.isSuperAdmin ?? false,
     });
   }
 
@@ -198,7 +237,7 @@ export class AuthService {
   async me(userId: string, tenantId: string) {
     const user = await this.prisma.user.findUniqueOrThrow({
       where: { id: userId },
-      select: { id: true, email: true, name: true },
+      select: { id: true, email: true, name: true, isSuperAdmin: true },
     });
 
     const membership = await this.prisma.tenantMember.findUniqueOrThrow({
@@ -214,6 +253,7 @@ export class AuthService {
         name: membership.tenant.name,
       },
       role: membership.role,
+      isSuperAdmin: user.isSuperAdmin,
     };
   }
 
@@ -245,6 +285,7 @@ export class AuthService {
         tenantId: payload.tenantId,
         role: payload.role,
         email: payload.email,
+        isSuperAdmin: payload.isSuperAdmin,
       }),
     );
 

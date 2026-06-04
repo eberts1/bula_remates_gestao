@@ -5,6 +5,7 @@ export interface JwtPayload {
   email: string;
   tenantId: string;
   role: TenantRole;
+  isSuperAdmin: boolean;
 }
 
 export interface AuthTokens {

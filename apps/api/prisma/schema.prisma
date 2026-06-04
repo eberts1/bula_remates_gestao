@@ -68,6 +68,8 @@ model User {
 
   deletedAt    DateTime? @map("deleted_at")
 
+  isSuperAdmin Boolean  @default(false) @map("is_super_admin")
+
 
 
   memberships    TenantMember[]
@@ -79,6 +81,8 @@ model User {
   clientFormTokens  ClientFormToken[]
 
   clientImportBatches ClientImportBatch[]
+
+  auditLogs         AuditLog[]
 
 
 
@@ -123,6 +127,8 @@ model Tenant {
   tenantIntentions   TenantIntention[]
 
   clientImportBatches ClientImportBatch[]
+
+  auditLogs           AuditLog[]
 
 
 
@@ -579,6 +585,54 @@ model ClientImportBatch {
   @@index([tenantId, createdAt(sort: Desc)])
 
   @@map("client_import_batches")
+
+}
+
+
+
+model AuditLog {
+
+  id          String   @id @default(uuid()) @db.Uuid
+
+  tenantId    String?  @map("tenant_id") @db.Uuid
+
+  userId      String?  @map("user_id") @db.Uuid
+
+  actorEmail  String?  @map("actor_email")
+
+  action      String
+
+  entityType  String?  @map("entity_type")
+
+  entityId    String?  @map("entity_id")
+
+  summary     String?
+
+  metadata    Json?
+
+  ip          String?
+
+  userAgent   String?  @map("user_agent")
+
+  createdAt   DateTime @default(now()) @map("created_at")
+
+
+
+  tenant Tenant? @relation(fields: [tenantId], references: [id], onDelete: SetNull)
+
+  user   User?   @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+
+
+  @@index([createdAt(sort: Desc)])
+
+  @@index([tenantId, createdAt(sort: Desc)])
+
+  @@index([action])
+
+  @@index([userId])
+
+  @@map("audit_logs")
 
 }
 

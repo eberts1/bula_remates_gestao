@@ -1,6 +1,6 @@
 import { Module } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
-import { APP_GUARD } from '@nestjs/core';
+import { APP_GUARD, APP_INTERCEPTOR } from '@nestjs/core';
 import { ThrottlerGuard, ThrottlerModule } from '@nestjs/throttler';
 import { AuthModule } from './auth/auth.module';
 import { DocumentsModule } from './documents/documents.module';
@@ -19,6 +19,9 @@ import { ClientImportsModule } from './client-imports/client-imports.module';
 import { TenantIntentionsModule } from './tenant-intentions/tenant-intentions.module';
 import { GeoModule } from './geo/geo.module';
 import { ClientHygieneModule } from './client-hygiene/client-hygiene.module';
+import { AuditModule } from './audit/audit.module';
+import { AuditInterceptor } from './audit/audit.interceptor';
+import { AdminModule } from './admin/admin.module';
 import { RedisThrottlerStorage } from './common/redis-throttler.storage';
 
 @Module({
@@ -35,6 +38,7 @@ import { RedisThrottlerStorage } from './common/redis-throttler.storage';
     PrismaModule,
     RedisModule,
     StorageModule,
+    AuditModule,
     AuthModule,
     TenantsModule,
     ClientsModule,
@@ -48,8 +52,12 @@ import { RedisThrottlerStorage } from './common/redis-throttler.storage';
     TenantIntentionsModule,
     GeoModule,
     ClientHygieneModule,
+    AdminModule,
     HealthModule,
   ],
-  providers: [{ provide: APP_GUARD, useClass: ThrottlerGuard }],
+  providers: [
+    { provide: APP_GUARD, useClass: ThrottlerGuard },
+    { provide: APP_INTERCEPTOR, useClass: AuditInterceptor },
+  ],
 })
 export class AppModule {}

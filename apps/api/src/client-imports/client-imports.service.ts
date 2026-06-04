@@ -9,7 +9,9 @@ import { Prisma } from '@prisma/client';
 import { JwtPayload } from '../auth/auth.types';
 import { ClientsService } from '../clients/clients.service';
 import { PrismaService } from '../prisma/prisma.service';
+import { AuditService } from '../audit/audit.service';
 import { normalizeLegacyCode } from './parsers/pdf-etb-estancia.parser';
+import { sanitizeImportEmail } from './parsers/email.util';
 import { parseImportFile, type ColumnMapping } from './parsers/parser.registry';
 import { normalizePhone } from './parsers/phone.util';
 
@@ -30,6 +32,23 @@ function formatImportCommitValidationError(error: {
   if (typeof rowIdx === 'number') parts.push(`(item ${rowIdx + 1} do lote)`);
   if (field) parts.push(`campo ${field}`);
   return `${parts.join(' ')}: ${issue.message}`;
+}
+
+function sanitizeCommitPayload(body: unknown): unknown {
+  if (!body || typeof body !== 'object') return body;
+  const payload = body as { rows?: unknown[] };
+  if (!Array.isArray(payload.rows)) return body;
+  return {
+    ...payload,
+    rows: payload.rows.map((row) => {
+      if (!row || typeof row !== 'object') return row;
+      const r = row as { email?: string | null };
+      return {
+        ...r,
+        email: sanitizeImportEmail(r.email),
+      };
+    }),
+  };
 }
 
 export interface ImportConflict {
@@ -64,6 +83,7 @@ export class ClientImportsService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly clientsService: ClientsService,
+    private readonly audit: AuditService,
   ) {}
 
   async parseFile(
@@ -101,17 +121,19 @@ export class ClientImportsService {
     const cache = await this.buildConflictCache(user.tenantId);
 
     const rowsWithConflicts = parsed.rows.map((row) => {
+      const email = sanitizeImportEmail(row.email);
       const conflict = this.findConflictCached(cache, {
         name: row.name,
         document: row.document,
         phone: row.phone,
-        email: row.email,
+        email,
         city: row.property.city,
         legacyCode: row.legacyCode,
         groupKey: row.groupKey,
       });
       return {
         ...row,
+        email,
         animalType: sourceHints.animalType ?? null,
         animalSex: sourceHints.animalSex ?? null,
         livestockCategory:
@@ -137,7 +159,8 @@ export class ClientImportsService {
   }
 
   async commit(user: JwtPayload, body: unknown) {
-    const parsed = importCommitSchema.safeParse(body);
+    const sanitizedBody = sanitizeCommitPayload(body);
+    const parsed = importCommitSchema.safeParse(sanitizedBody);
     if (!parsed.success) {
       throw new BadRequestException(
         formatImportCommitValidationError(parsed.error),
@@ -152,6 +175,23 @@ export class ClientImportsService {
         data: {
           tenantId: user.tenantId,
           createdById: user.sub,
+          fileName,
+          mimeType,
+          sourceType,
+          rowCount: batchSummary.rowCount,
+          importedCount: batchSummary.importedCount,
+          updatedCount: batchSummary.updatedCount,
+          skippedCount: batchSummary.skippedCount,
+        },
+      });
+      void this.audit.log({
+        tenantId: user.tenantId,
+        userId: user.sub,
+        actorEmail: user.email,
+        action: 'client_import.commit',
+        entityType: 'client_import_batch',
+        summary: `Importação "${fileName}": ${batchSummary.importedCount} novos, ${batchSummary.updatedCount} atualizados, ${batchSummary.skippedCount} ignorados`,
+        metadata: {
           fileName,
           mimeType,
           sourceType,
@@ -231,6 +271,24 @@ export class ClientImportsService {
         `Falha ao importar: ${detail}`,
       );
     }
+
+    void this.audit.log({
+      tenantId: user.tenantId,
+      userId: user.sub,
+      actorEmail: user.email,
+      action: 'client_import.commit',
+      entityType: 'client_import_batch',
+      summary: `Importação "${fileName}": ${importedCount} novos, ${updatedCount} atualizados, ${skippedCount} ignorados`,
+      metadata: {
+        fileName,
+        mimeType,
+        sourceType,
+        rowCount: toProcess.length,
+        importedCount,
+        updatedCount,
+        skippedCount,
+      },
+    });
 
     return { importedCount, updatedCount, skippedCount };
   }

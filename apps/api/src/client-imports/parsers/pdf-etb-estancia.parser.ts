@@ -9,6 +9,11 @@ import {
   findCitySuffixInWords,
   getEtbGluedCityNames,
 } from './city-from-words.util';
+import {
+  extractSanitizedEmails,
+  maskEmailsInText,
+  restoreEmailsInText,
+} from './email.util';
 import { extractPhonesFromTail, normalizePhone } from './phone.util';
 
 const BRAZILIAN_STATES = new Set([
@@ -36,7 +41,7 @@ const SKIP_LINE =
   /^(ESTANCIA BAHIA|LISTAGEM DE CLIENTES|Página \d|CÓDIGO\s*NOME|DADOS DA\(S\) FAZENDA|TELEFONES?\s*EMAIL|SISTEMA DE LEILÕES|-- \d+ of|\d+\s+Registros:|^\d{1,2}\/\d{2}\/\d{4}|^\/?\d{1,2}\/\d{2,4}$|^\d{1,2}:\d{2}|^:\d{2}:\d{2})/i;
 
 const EMAIL_RE =
-  /[a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,}/gi;
+  /[a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,}/i;
 
 const UF_LIST = Array.from(BRAZILIAN_STATES).join('|');
 
@@ -102,6 +107,9 @@ function normalizeEtbLine(line: string): string {
   let t = line.trim();
   if (!t) return t;
 
+  const { masked, emails } = maskEmailsInText(t);
+  t = masked;
+
   t = t.replace(/^(\d{1,3}\.\d{3}|\d{4,6})/, '$1 ');
   t = t.replace(/(LTDA\.?|S\/A)(?=[A-ZÁÉÍÓÚÂÊÔÃÕÇ])/gi, '$1 ');
   // ME só após espaço (sufixo societário) — não quebra REPARTIMENTO, DEUSANTANA etc.
@@ -156,6 +164,7 @@ function normalizeEtbLine(line: string): string {
     '$1 $2 $3',
   );
   t = t.replace(/(FAZENDA|SITIO|SÍTIO|SITIO)/gi, ' $1 ');
+  t = restoreEmailsInText(t, emails);
   return t.replace(/\s+/g, ' ').trim();
 }
 
@@ -167,14 +176,7 @@ function cleanLines(text: string): string[] {
 }
 
 function extractEmails(text: string): string[] {
-  const raw = text.match(EMAIL_RE) ?? [];
-  const valid: string[] = [];
-  for (const e of raw) {
-    const lower = e.toLowerCase().replace(/[;,]+$/, '');
-    if (lower.length < 6 || lower.includes('nao informado')) continue;
-    if (!valid.includes(lower)) valid.push(lower);
-  }
-  return valid;
+  return extractSanitizedEmails(text);
 }
 
 function extractContactTail(line: string): {
