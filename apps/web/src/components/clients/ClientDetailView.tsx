@@ -1,6 +1,7 @@
 'use client';
 
 import type { Client } from '@/types/client';
+import { collectClientPhones } from '@/lib/client-phones';
 
 interface Props {
   client: Client;
@@ -24,7 +25,21 @@ function DetailField({
   );
 }
 
+function formatAllPhones(client: Client): string | null {
+  const { phone, phone2, extraPhones } = collectClientPhones({
+    phone: client.phone,
+    properties: client.properties,
+    notes: client.notes,
+  });
+  const parts = [phone, phone2, ...extraPhones.split('\n').filter(Boolean)].filter(
+    Boolean,
+  );
+  return parts.length > 0 ? parts.join(' · ') : null;
+}
+
 export function ClientDetailView({ client, onEdit }: Props) {
+  const allPhones = formatAllPhones(client);
+
   return (
     <div className="card">
       <div className="detail-header">
@@ -51,7 +66,7 @@ export function ClientDetailView({ client, onEdit }: Props) {
           <DetailField label="Nome" value={client.name} />
           <DetailField label="CPF/CNPJ" value={client.document} />
           <DetailField label="E-mail" value={client.email} />
-          <DetailField label="Telefone" value={client.phone} />
+          <DetailField label="Telefones" value={allPhones} />
           <DetailField label="Endereço completo" value={client.addressFull} fullWidth />
         </dl>
       </section>

@@ -6,6 +6,11 @@ import {
   LIVESTOCK_CATEGORIES,
 } from '@docs/shared';
 import type { ImportRow, TenantIntention } from '@/types/client-import';
+import {
+  mergeNotesWithExtraPhones,
+  parseExtraPhonesInput,
+  splitNotesAndExtraPhones,
+} from '@/lib/client-phones';
 
 const ANIMAL_TYPE_LABELS: Record<string, string> = {
   corte: 'Corte',
@@ -54,6 +59,9 @@ export function ImportReviewDrawer({
   if (!row) return null;
 
   const current = row;
+  const { notesWithoutPhones, extraPhones: extraFromNotes } =
+    splitNotesAndExtraPhones(current.notes);
+  const extraPhonesText = extraFromNotes.join('\n');
 
   function patch(partial: Partial<ImportRow>) {
     onSave({ ...current, ...partial });
@@ -173,10 +181,32 @@ export function ImportReviewDrawer({
               />
             </label>
             <label>
-              Telefone
+              Telefone principal
               <input
                 value={current.phone ?? ''}
                 onChange={(e) => patch({ phone: e.target.value || null })}
+              />
+            </label>
+            <label>
+              Telefone 2 (propriedade)
+              <input
+                value={current.property.phone ?? ''}
+                onChange={(e) => patchProperty('phone', e.target.value)}
+              />
+            </label>
+            <label className="form-full-width">
+              Outros telefones
+              <textarea
+                rows={2}
+                value={extraPhonesText}
+                onChange={(e) => {
+                  const merged = mergeNotesWithExtraPhones(
+                    notesWithoutPhones,
+                    parseExtraPhonesInput(e.target.value),
+                  );
+                  patch({ notes: merged || null });
+                }}
+                placeholder="3º telefone em diante"
               />
             </label>
             <label>
@@ -208,13 +238,6 @@ export function ImportReviewDrawer({
                 onChange={(e) =>
                   patchProperty('state', e.target.value.toUpperCase())
                 }
-              />
-            </label>
-            <label>
-              Tel. propriedade
-              <input
-                value={current.property.phone ?? ''}
-                onChange={(e) => patchProperty('phone', e.target.value)}
               />
             </label>
             <label>
@@ -283,7 +306,8 @@ export function ImportReviewDrawer({
             </label>
             <label className="form-full-width">
               Notas
-              <input
+              <textarea
+                rows={3}
                 value={current.notes ?? ''}
                 onChange={(e) => patch({ notes: e.target.value || null })}
               />

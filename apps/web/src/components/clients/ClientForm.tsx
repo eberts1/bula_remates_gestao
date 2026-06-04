@@ -5,6 +5,11 @@ import type { Client, CollaboratorOption } from '@/types/client';
 import { ClientRegistrationForm } from './ClientRegistrationForm';
 import type { ClientDataFields } from './ClientDataSection';
 import type { ClientProperty } from '@/types/client';
+import {
+  collectClientPhones,
+  distributePhonesForSave,
+  splitNotesAndExtraPhones,
+} from '@/lib/client-phones';
 
 interface Props {
   client: Client | null;
@@ -36,24 +41,35 @@ export function ClientForm({
       .catch(() => {});
   }, []);
 
+  const phoneFields = client
+    ? collectClientPhones({
+        phone: client.phone,
+        properties: client.properties,
+        notes: client.notes,
+      })
+    : null;
+
   const initialData: ClientDataFields | undefined = client
     ? {
         name: client.name,
         document: client.document ?? '',
         email: client.email ?? '',
-        phone: client.phone ?? '',
         addressFull: client.addressFull ?? '',
+        ...(phoneFields ?? { phone: '', phone2: '', extraPhones: '' }),
       }
     : undefined;
 
   const initialProperties: ClientProperty[] | undefined = client?.properties?.map(
-    (p) => ({
+    (p, i) => ({
       id: p.id,
       farmName: p.farmName,
       city: p.city,
       state: p.state,
       routeNotes: p.routeNotes ?? '',
-      phone: p.phone ?? '',
+      phone:
+        i === 0 && phoneFields && (p.phone ?? '') === phoneFields.phone2
+          ? ''
+          : (p.phone ?? ''),
       ie: p.ie ?? '',
       nirf: p.nirf ?? '',
     }),
@@ -71,26 +87,35 @@ export function ClientForm({
     setLoading(true);
     setError('');
 
+    const { notesWithoutPhones } = splitNotesAndExtraPhones(admin.notes);
+    const distributed = distributePhonesForSave({
+      phone: data.phone,
+      phone2: data.phone2,
+      extraPhones: data.extraPhones,
+      properties: properties.filter(
+        (p) => p.farmName.trim() || p.city.trim() || p.state,
+      ),
+      adminNotes: notesWithoutPhones,
+    });
+
     const body = {
       name: data.name,
       document: data.document || undefined,
       email: data.email || undefined,
-      phone: data.phone || undefined,
+      phone: distributed.clientPhone,
       addressFull: data.addressFull || undefined,
-      notes: admin.notes || undefined,
+      notes: distributed.notes,
       active: admin.active,
       responsibleId: admin.responsibleId || null,
-      properties: properties
-        .filter((p) => p.farmName.trim() || p.city.trim() || p.state)
-        .map((p) => ({
-          farmName: p.farmName,
-          city: p.city,
-          state: p.state,
-          routeNotes: p.routeNotes || undefined,
-          phone: p.phone || undefined,
-          ie: p.ie || undefined,
-          nirf: p.nirf || undefined,
-        })),
+      properties: distributed.properties.map((p) => ({
+        farmName: p.farmName,
+        city: p.city,
+        state: p.state,
+        routeNotes: p.routeNotes || undefined,
+        phone: p.phone || undefined,
+        ie: p.ie || undefined,
+        nirf: p.nirf || undefined,
+      })),
     };
 
     try {
@@ -159,7 +184,7 @@ export function ClientForm({
         initialAdmin={
           client
             ? {
-                notes: client.notes ?? '',
+                notes: splitNotesAndExtraPhones(client.notes).notesWithoutPhones,
                 active: client.active,
                 responsibleId: client.responsibleId ?? '',
               }

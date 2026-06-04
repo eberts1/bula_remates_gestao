@@ -4,6 +4,11 @@ const pdfParse = require('pdf-parse') as (
 ) => Promise<{ text: string }>;
 
 import type { ParseFileResult, ParsedImportRow } from './import-parser.types';
+import {
+  canonicalizeCity,
+  findCitySuffixInWords,
+  getEtbGluedCityNames,
+} from './city-from-words.util';
 import { extractPhonesFromTail, normalizePhone } from './phone.util';
 
 const BRAZILIAN_STATES = new Set([
@@ -34,78 +39,6 @@ const EMAIL_RE =
   /[a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,}/gi;
 
 const UF_LIST = Array.from(BRAZILIAN_STATES).join('|');
-
-const GLUED_CITIES = [
-  'SAO DOMINGOS DO ARAGUAIAPA',
-  'SAO FELIX DO ARAGUAIA',
-  'SANTA MARIA DAS BARREIRAS',
-  'NOVA XAVANTINA',
-  'OURILANDIA DO NORTE',
-  'NOVO REPARTIMENTO',
-  'AGUA AZUL DO NORTE',
-  'SANTANA DO ARAGUAIA',
-  'FLORESTA DO ARAGUAIA',
-  'CUMARU DO NORTE',
-  'CANAA DOS CARAJAS',
-  'ELDORADO DOS CARAJAS',
-  'CONCEICAO DO ARAGUAIA',
-  'BREJO GRANDE DO ARAGUAIA',
-  'SAO GERALDO DO ARAGUAIA',
-  'BOM JESUS DO TOCANTINS',
-  'DIVINOPOLIS DO TOCANTINS',
-  'VITORIA DO XINGU',
-  'RONDON DO PARA',
-  'PORTO DE MOZ',
-  'RIO MARIA',
-  'REDENCAO',
-  'XINGUARA',
-  'MARABA',
-  'ALTAMIRA',
-  'ITAITUBA',
-  'PACAJA',
-  'TUCUMA',
-  'JACUNDA',
-  'ORIXIMINA',
-  'SANTAREM',
-  'CONFRESA',
-  'TEREZINHA',
-  'XAVANTINA',
-  'FLORESTA',
-  'GARCAS',
-  'ARAGUAIA',
-  'XINGU',
-  'PRIMAVERA',
-  'ALTAMIRA',
-  'MARABA',
-  'UBERABA',
-  'ANAPU',
-  'TAILANDIA',
-  'ITUPIRANGA',
-  'PICARRA',
-  'URUARA',
-  'SAPUCAIA',
-  'MEDICILANDIA',
-  'PARAGOMINAS',
-];
-
-const COMMON_CITY_SUFFIXES = [
-  'CONFRESA',
-  'TEREZINHA',
-  'XAVANTINA',
-  'FLORESTA',
-  'GARCAS',
-  'VERDE',
-  'ARAGUAIA',
-  'XINGU',
-  'BANDEIRANTES',
-  'MUTUM',
-  'RONDON',
-  'PRIMAVERA',
-  'REPARTIMENTO',
-  'ALTAMIRA',
-  'MARABA',
-  'TERRA DO MEIO',
-];
 
 export function normalizeLegacyCode(code: string): string {
   return code.replace(/\D/g, '');
@@ -194,7 +127,7 @@ function normalizeEtbLine(line: string): string {
   t = t.replace(/DEUSANTANA/gi, 'DEUS SANTANA');
   t = t.replace(/SANTAANAREDENCAO/gi, 'SANTA ANA REDENCAO');
 
-  const citiesSorted = [...GLUED_CITIES].sort((a, b) => b.length - a.length);
+  const citiesSorted = getEtbGluedCityNames();
   for (const city of citiesSorted) {
     const esc = city.replace(/\s+/g, '\\s+');
     t = t.replace(new RegExp(`(${esc})\\s*(${UF_LIST})$`, 'gi'), '$1 $2');
@@ -212,14 +145,6 @@ function normalizeEtbLine(line: string): string {
   // Após separar UF: "SORTENOVO REPARTIMENTO" → fazenda SORTE + cidade NOVO REPARTIMENTO
   t = t.replace(/SORTENOVO(?=\s+REPARTIMENTO)/gi, 'SORTE NOVO');
   t = t.replace(/\bREPARTIME\s+NTO\b/gi, 'REPARTIMENTO');
-
-  for (const city of COMMON_CITY_SUFFIXES) {
-    const esc = city.replace(/\s+/g, '\\s+');
-    t = t.replace(
-      new RegExp(`([A-Z]{2,})(${esc})(?=\\s+${UF_LIST}$)`, 'gi'),
-      '$1 $2 ',
-    );
-  }
 
   t = t.replace(/MEUFAZENDA/gi, 'MEU FAZENDA ');
   t = t.replace(/MEIOFAZENDA/gi, 'MEIO FAZENDA ');
@@ -294,16 +219,13 @@ function findPropertyStart(text: string): number {
   return m?.index ?? -1;
 }
 
-function inferCityPartCount(parts: string[]): number {
+function inferCityPartCount(parts: string[], state: string): number {
   if (parts.length <= 1) return 1;
-  const w = parts.map((p) => p.toUpperCase());
 
-  for (let n = Math.min(4, parts.length - 1); n >= 1; n--) {
-    const candidate = parts.slice(-n).join(' ').toUpperCase();
-    if (GLUED_CITIES.some((c) => c.toUpperCase() === candidate)) {
-      return n;
-    }
-  }
+  const ibge = findCitySuffixInWords(parts, state);
+  if (ibge) return ibge.cityPartCount;
+
+  const w = parts.map((p) => p.toUpperCase());
 
   if (parts.length >= 3 && w[parts.length - 2] === 'DO') {
     const doTail = w[parts.length - 1] ?? '';
@@ -376,16 +298,19 @@ function parseFarmLine(line: string): {
     return { farmName: farmKeyword, city: '', state };
   }
 
-  const cityParts = inferCityPartCount(parts);
-  const city = parts.slice(-cityParts).join(' ');
+  const ibgeMatch = findCitySuffixInWords(parts, state);
+  const cityParts = ibgeMatch?.cityPartCount ?? inferCityPartCount(parts, state);
+  const rawCity = ibgeMatch?.cityName ?? parts.slice(-cityParts).join(' ');
   const farmRest = parts.slice(0, -cityParts).join(' ');
   const farmName = farmRest
     ? `${farmKeyword} ${farmRest}`.replace(/\s+/g, ' ').trim()
     : farmKeyword;
 
+  const city = canonicalizeCity(rawCity.trim(), state) || '—';
+
   return {
     farmName,
-    city: city.trim() || '—',
+    city,
     state,
   };
 }
@@ -459,7 +384,6 @@ function parseBlock(block: EtbBlock, rowIndex: number): ParsedImportRow | null {
   const farmRawLines: string[] = [];
   const allPhones: string[] = [];
   const allEmails: string[] = [];
-  const phoneDisplays: string[] = [];
 
   const processLine = (line: string, isFirst: boolean) => {
     const contact = extractContactTail(line);
@@ -469,7 +393,6 @@ function parseBlock(block: EtbBlock, rowIndex: number): ParsedImportRow | null {
     for (const e of contact.emails) {
       if (!allEmails.includes(e)) allEmails.push(e);
     }
-    if (contact.phoneDisplay) phoneDisplays.push(contact.phoneDisplay);
 
     if (isContactOnlyLine(line) && !contact.body) return;
 
@@ -555,15 +478,17 @@ function parseBlock(block: EtbBlock, rowIndex: number): ParsedImportRow | null {
 
   const email = allEmails[0] ?? null;
   const phone = allPhones[0] ?? null;
-  const phoneLine = phoneDisplays.join(' ').trim();
+  const propertyPhone = allPhones[1] ?? null;
 
   const noteLines: string[] = [];
   if (properties.length > 1) {
     noteLines.push(`${properties.length} propriedades importadas`);
   }
-  if (phoneLine) noteLines.push(phoneLine);
+  if (allPhones.length > 2) {
+    noteLines.push(`Outros telefones: ${allPhones.slice(2).join(', ')}`);
+  }
   if (allEmails.length > 1) {
-    noteLines.push(allEmails.slice(1).join(' '));
+    noteLines.push(`E-mails adicionais: ${allEmails.slice(1).join(', ')}`);
   }
   noteLines.push(`Cód. ETB: ${block.codeDisplay}`);
 
@@ -588,6 +513,7 @@ function parseBlock(block: EtbBlock, rowIndex: number): ParsedImportRow | null {
       farmName: primary.farmName,
       city: primary.city,
       state: primary.state,
+      phone: propertyPhone ?? undefined,
       routeNotes: formatPropertyLabel(primary),
     },
     additionalProperties,

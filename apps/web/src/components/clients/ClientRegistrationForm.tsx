@@ -45,6 +45,8 @@ const emptyData: ClientDataFields = {
   document: '',
   email: '',
   phone: '',
+  phone2: '',
+  extraPhones: '',
   addressFull: '',
 };
 

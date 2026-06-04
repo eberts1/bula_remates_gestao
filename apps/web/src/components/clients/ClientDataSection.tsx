@@ -5,6 +5,10 @@ export interface ClientDataFields {
   document: string;
   email: string;
   phone: string;
+  /** 2º telefone (ex.: importação ETB → tel. da propriedade principal). */
+  phone2: string;
+  /** 3º telefone em diante, um por linha ou separados por vírgula. */
+  extraPhones: string;
   addressFull: string;
 }
 
@@ -51,10 +55,37 @@ export function ClientDataSection({
           />
         </label>
         <label>
-          Telefone
+          Telefone principal
           <input
             value={data.phone}
             onChange={(e) => onChange('phone', e.target.value)}
+            placeholder="(94) 99999-9999"
+          />
+        </label>
+        <label>
+          Telefone 2
+          <input
+            value={data.phone2}
+            onChange={(e) => onChange('phone2', e.target.value)}
+            placeholder="2º número da importação / propriedade"
+          />
+        </label>
+        <label className="form-full-width">
+          Outros telefones
+          <textarea
+            value={data.extraPhones}
+            onChange={(e) => onChange('extraPhones', e.target.value)}
+            rows={2}
+            placeholder="Um por linha ou separados por vírgula (3º telefone em diante)"
+            style={{
+              background: 'var(--bg)',
+              color: 'var(--text)',
+              border: '1px solid var(--border)',
+              borderRadius: 8,
+              padding: '0.65rem 0.85rem',
+              width: '100%',
+              resize: 'vertical',
+            }}
           />
         </label>
         <label className="form-full-width">

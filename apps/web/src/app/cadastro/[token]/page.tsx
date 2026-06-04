@@ -52,6 +52,8 @@ export default function PublicCadastroPage() {
         document: payload.client.document,
         email: payload.client.email,
         phone: payload.client.phone,
+        phone2: '',
+        extraPhones: '',
         addressFull: payload.client.addressFull,
       }
     : {
@@ -59,6 +61,8 @@ export default function PublicCadastroPage() {
         document: '',
         email: '',
         phone: '',
+        phone2: '',
+        extraPhones: '',
         addressFull: '',
       };
 
