@@ -1,6 +1,9 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { apiFetch } from '@/lib/api';
+import { backendErrorMessage, fetchBackend } from '@/lib/api';
 import { getAccessToken } from '@/lib/auth';
+
+/** Importações grandes (PDF 200+ linhas) podem levar mais que o padrão de 10s na Vercel. */
+export const maxDuration = 60;
 
 export async function POST(req: NextRequest) {
   const token = await getAccessToken();
@@ -10,16 +13,21 @@ export async function POST(req: NextRequest) {
 
   try {
     const body = await req.json();
-    const data = await apiFetch('/clients/import/commit', {
+    const { res, data } = await fetchBackend('/clients/import/commit', {
       method: 'POST',
-      accessToken: token,
+      headers: { Authorization: `Bearer ${token}` },
       body: JSON.stringify(body),
     });
+    if (!res.ok) {
+      return NextResponse.json(
+        { message: backendErrorMessage(data, res, 'Falha ao importar') },
+        { status: res.status },
+      );
+    }
     return NextResponse.json(data);
   } catch (e) {
-    return NextResponse.json(
-      { message: e instanceof Error ? e.message : 'Erro' },
-      { status: 500 },
-    );
+    const message = e instanceof Error ? e.message : 'Erro ao importar';
+    const status = message.includes('conectar à API') ? 502 : 500;
+    return NextResponse.json({ message }, { status });
   }
 }

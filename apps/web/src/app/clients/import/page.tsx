@@ -158,39 +158,90 @@ export default function ClientImportPage() {
       return;
     }
 
+    const COMMIT_CHUNK = 40;
+    const payloadRows = selected.map((r) => ({
+      rowIndex: r.rowIndex,
+      name: r.name,
+      document: r.document,
+      email: r.email,
+      phone: r.phone,
+      notes: r.notes,
+      property: r.property,
+      animalType: r.animalType,
+      animalSex: r.animalSex,
+      livestockCategory: r.livestockCategory,
+      intentionIds: r.intentionIds,
+      intentionNotes: r.intentionNotes,
+      resolution: r.resolution,
+      conflictClientId: r.conflictClientId,
+      selected: true,
+    }));
+
     setCommitting(true);
     setError(null);
     try {
-      const res = await fetch('/api/clients/import/commit', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          fileName: fileMeta.fileName,
-          mimeType: fileMeta.mimeType,
-          sourceType: fileMeta.sourceType,
-          rows: selected.map((r) => ({
-            rowIndex: r.rowIndex,
-            name: r.name,
-            document: r.document,
-            email: r.email,
-            phone: r.phone,
-            notes: r.notes,
-            property: r.property,
-            animalType: r.animalType,
-            animalSex: r.animalSex,
-            livestockCategory: r.livestockCategory,
-            intentionIds: r.intentionIds,
-            intentionNotes: r.intentionNotes,
-            resolution: r.resolution,
-            conflictClientId: r.conflictClientId,
-            selected: true,
-          })),
-        }),
-      });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.message ?? 'Falha ao salvar');
+      const totals: CommitImportResult = {
+        importedCount: 0,
+        updatedCount: 0,
+        skippedCount: 0,
+      };
 
-      setResult(data as CommitImportResult);
+      for (let i = 0; i < payloadRows.length; i += COMMIT_CHUNK) {
+        const chunk = payloadRows.slice(i, i + COMMIT_CHUNK);
+        const res = await fetch('/api/clients/import/commit', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            fileName: fileMeta.fileName,
+            mimeType: fileMeta.mimeType,
+            sourceType: fileMeta.sourceType,
+            rows: chunk,
+          }),
+        });
+
+        let data: CommitImportResult & { message?: string } = {
+          importedCount: 0,
+          updatedCount: 0,
+          skippedCount: 0,
+        };
+        try {
+          const text = await res.text();
+          if (text.trim()) data = JSON.parse(text) as typeof data;
+        } catch {
+          /* resposta não-JSON */
+        }
+        if (!res.ok) {
+          throw new Error(
+            data.message ??
+              `Falha ao salvar (lote ${Math.floor(i / COMMIT_CHUNK) + 1})`,
+          );
+        }
+
+        totals.importedCount += data.importedCount ?? 0;
+        totals.updatedCount += data.updatedCount ?? 0;
+        totals.skippedCount += data.skippedCount ?? 0;
+      }
+
+      if (payloadRows.length > COMMIT_CHUNK) {
+        await fetch('/api/clients/import/commit', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            fileName: fileMeta.fileName,
+            mimeType: fileMeta.mimeType,
+            sourceType: fileMeta.sourceType,
+            rows: [],
+            batchSummary: {
+              rowCount: selected.length,
+              importedCount: totals.importedCount,
+              updatedCount: totals.updatedCount,
+              skippedCount: totals.skippedCount,
+            },
+          }),
+        });
+      }
+
+      setResult(totals);
       setRows((prev) => prev.filter((r) => !r.selected));
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Erro ao importar');

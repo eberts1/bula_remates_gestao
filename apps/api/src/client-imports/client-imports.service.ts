@@ -1,6 +1,7 @@
 import {
   BadRequestException,
   Injectable,
+  InternalServerErrorException,
 } from '@nestjs/common';
 import type { ImportCommitRow, ImportSourceHints } from '@docs/shared';
 import { importCommitSchema } from '@docs/shared';
@@ -11,6 +12,9 @@ import { PrismaService } from '../prisma/prisma.service';
 import { parsePdfTouroMt } from './parsers/pdf-touro-mt.parser';
 import { parseSpreadsheet, type ColumnMapping } from './parsers/spreadsheet.parser';
 import { normalizePhone } from './parsers/phone.util';
+
+/** Evita timeout do Prisma/Neon em importações grandes (ex.: PDF 200+ linhas). */
+const IMPORT_COMMIT_CHUNK_SIZE = 25;
 
 export interface ImportConflict {
   clientId: string;
@@ -109,112 +113,182 @@ export class ClientImportsService {
       throw new BadRequestException(parsed.error.flatten());
     }
 
-    const { fileName, mimeType, sourceType, rows } = parsed.data;
+    const { fileName, mimeType, sourceType, rows, batchSummary } = parsed.data;
     const toProcess = rows.filter((r) => r.selected !== false);
 
-    let importedCount = 0;
-    let updatedCount = 0;
-    let skippedCount = 0;
-
-    await this.prisma.$transaction(async (tx) => {
-      for (const row of toProcess) {
-        const resolution = row.resolution ?? 'create';
-
-        if (resolution === 'skip') {
-          skippedCount++;
-          continue;
-        }
-
-        const tagData = {
-          animalType: row.animalType ?? null,
-          animalSex: row.animalSex ?? null,
-          livestockCategory: row.livestockCategory ?? null,
-          intentionNotes: row.intentionNotes ?? null,
-        };
-
-        if (resolution === 'update') {
-          const targetId =
-            row.conflictClientId ??
-            (
-              await this.findConflict(user.tenantId, {
-                name: row.name,
-                document: row.document ?? null,
-                phone: row.phone ?? null,
-                city: row.property.city,
-              })
-            )?.clientId;
-          if (!targetId) {
-            skippedCount++;
-            continue;
-          }
-          await tx.client.update({
-            where: { id: targetId },
-            data: {
-              ...(row.phone ? { phone: row.phone } : {}),
-              ...(row.notes ? { notes: row.notes } : {}),
-              ...tagData,
-            },
-          });
-          await this.clientsService.appendPropertyIfNotExists(
-            tx,
-            user.tenantId,
-            targetId,
-            row.property,
-          );
-          await this.clientsService.syncClientIntentions(
-            tx,
-            targetId,
-            row.intentionIds ?? [],
-          );
-          updatedCount++;
-        } else {
-          const created = await tx.client.create({
-            data: {
-              tenantId: user.tenantId,
-              name: row.name,
-              document: row.document?.trim() || null,
-              email: row.email || null,
-              phone: row.phone ?? null,
-              notes: row.notes ?? null,
-              ...tagData,
-            },
-          });
-          await tx.clientProperty.create({
-            data: {
-              clientId: created.id,
-              tenantId: user.tenantId,
-              farmName: row.property.farmName,
-              city: row.property.city,
-              state: row.property.state.toUpperCase(),
-              phone: row.property.phone ?? null,
-              sortOrder: 0,
-            },
-          });
-          await this.clientsService.syncClientIntentions(
-            tx,
-            created.id,
-            row.intentionIds ?? [],
-          );
-          importedCount++;
-        }
-      }
-
-      await tx.clientImportBatch.create({
+    if (toProcess.length === 0 && batchSummary) {
+      await this.prisma.clientImportBatch.create({
         data: {
           tenantId: user.tenantId,
           createdById: user.sub,
           fileName,
           mimeType,
           sourceType,
-          rowCount: toProcess.length,
-          importedCount,
-          updatedCount,
-          skippedCount,
+          rowCount: batchSummary.rowCount,
+          importedCount: batchSummary.importedCount,
+          updatedCount: batchSummary.updatedCount,
+          skippedCount: batchSummary.skippedCount,
         },
       });
-    });
+      return {
+        importedCount: batchSummary.importedCount,
+        updatedCount: batchSummary.updatedCount,
+        skippedCount: batchSummary.skippedCount,
+      };
+    }
+
+    let importedCount = 0;
+    let updatedCount = 0;
+    let skippedCount = 0;
+
+    const validIntentionIds = await this.getTenantIntentionIdSet(user.tenantId);
+
+    try {
+      for (let i = 0; i < toProcess.length; i += IMPORT_COMMIT_CHUNK_SIZE) {
+        const chunk = toProcess.slice(i, i + IMPORT_COMMIT_CHUNK_SIZE);
+        const partial = await this.prisma.$transaction(
+          async (tx) => {
+            let imp = 0;
+            let upd = 0;
+            let skip = 0;
+            for (const row of chunk) {
+              const result = await this.processImportRow(
+                tx,
+                user,
+                row,
+                validIntentionIds,
+              );
+              imp += result.imported;
+              upd += result.updated;
+              skip += result.skipped;
+            }
+            return { imported: imp, updated: upd, skipped: skip };
+          },
+          { maxWait: 15_000, timeout: 120_000 },
+        );
+        importedCount += partial.imported;
+        updatedCount += partial.updated;
+        skippedCount += partial.skipped;
+      }
+
+      if (!batchSummary) {
+        await this.prisma.clientImportBatch.create({
+          data: {
+            tenantId: user.tenantId,
+            createdById: user.sub,
+            fileName,
+            mimeType,
+            sourceType,
+            rowCount: toProcess.length,
+            importedCount,
+            updatedCount,
+            skippedCount,
+          },
+        });
+      }
+    } catch (e) {
+      const detail =
+        e instanceof Error ? e.message : 'erro desconhecido ao gravar no banco';
+      if (e instanceof Prisma.PrismaClientKnownRequestError) {
+        throw new BadRequestException(
+          `Falha ao importar (linha ~${importedCount + updatedCount + skippedCount + 1}): ${detail}`,
+        );
+      }
+      throw new InternalServerErrorException(
+        `Falha ao importar: ${detail}`,
+      );
+    }
 
     return { importedCount, updatedCount, skippedCount };
+  }
+
+  private async getTenantIntentionIdSet(tenantId: string): Promise<Set<string>> {
+    const items = await this.prisma.tenantIntention.findMany({
+      where: { tenantId, active: true },
+      select: { id: true },
+    });
+    return new Set(items.map((i) => i.id));
+  }
+
+  private async processImportRow(
+    tx: Prisma.TransactionClient,
+    user: JwtPayload,
+    row: ImportCommitRow,
+    validIntentionIds: Set<string>,
+  ): Promise<{ imported: number; updated: number; skipped: number }> {
+    const resolution = row.resolution ?? 'create';
+
+    if (resolution === 'skip') {
+      return { imported: 0, updated: 0, skipped: 1 };
+    }
+
+    const intentionIds = (row.intentionIds ?? []).filter((id) =>
+      validIntentionIds.has(id),
+    );
+
+    const tagData = {
+      animalType: row.animalType ?? null,
+      animalSex: row.animalSex ?? null,
+      livestockCategory: row.livestockCategory ?? null,
+      intentionNotes: row.intentionNotes ?? null,
+    };
+
+    if (resolution === 'update') {
+      const targetId =
+        row.conflictClientId ??
+        (
+          await this.findConflict(user.tenantId, {
+            name: row.name,
+            document: row.document ?? null,
+            phone: row.phone ?? null,
+            city: row.property.city,
+          })
+        )?.clientId;
+      if (!targetId) {
+        return { imported: 0, updated: 0, skipped: 1 };
+      }
+      await tx.client.update({
+        where: { id: targetId },
+        data: {
+          ...(row.phone ? { phone: row.phone } : {}),
+          ...(row.notes ? { notes: row.notes } : {}),
+          ...tagData,
+        },
+      });
+      await this.clientsService.appendPropertyIfNotExists(
+        tx,
+        user.tenantId,
+        targetId,
+        row.property,
+      );
+      await this.clientsService.syncClientIntentions(tx, targetId, intentionIds);
+      return { imported: 0, updated: 1, skipped: 0 };
+    }
+
+    const created = await tx.client.create({
+      data: {
+        tenantId: user.tenantId,
+        name: row.name,
+        document: row.document?.trim() || null,
+        email: row.email || null,
+        phone: row.phone ?? null,
+        notes: row.notes ?? null,
+        ...tagData,
+      },
+    });
+    await tx.clientProperty.create({
+      data: {
+        clientId: created.id,
+        tenantId: user.tenantId,
+        farmName: row.property.farmName,
+        city: row.property.city,
+        state: row.property.state.toUpperCase(),
+        phone: row.property.phone ?? null,
+        sortOrder: 0,
+      },
+    });
+    await this.clientsService.syncClientIntentions(tx, created.id, intentionIds);
+    return { imported: 1, updated: 0, skipped: 0 };
   }
 
   async findConflict(

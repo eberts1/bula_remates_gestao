@@ -196,12 +196,25 @@ export const importCommitRowSchema = importRowDataSchema.extend({
 
 
 
-export const importCommitSchema = z.object({
-  fileName: z.string().min(1).max(255),
-  mimeType: z.string().min(1),
-  sourceType: z.string().min(1),
-  rows: z.array(importCommitRowSchema).min(1).max(5000),
+export const importCommitBatchSummarySchema = z.object({
+  rowCount: z.number().int().nonnegative(),
+  importedCount: z.number().int().nonnegative(),
+  updatedCount: z.number().int().nonnegative(),
+  skippedCount: z.number().int().nonnegative(),
 });
+
+export const importCommitSchema = z
+  .object({
+    fileName: z.string().min(1).max(255),
+    mimeType: z.string().min(1),
+    sourceType: z.string().min(1),
+    rows: z.array(importCommitRowSchema).max(5000),
+    /** Histórico consolidado quando o front importa em vários lotes. */
+    batchSummary: importCommitBatchSummarySchema.optional(),
+  })
+  .refine((d) => d.rows.length > 0 || d.batchSummary != null, {
+    message: 'Informe linhas ou batchSummary',
+  });
 
 
 
