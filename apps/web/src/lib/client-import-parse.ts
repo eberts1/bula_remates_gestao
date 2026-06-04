@@ -66,5 +66,5 @@ export async function parseImportFileDirect(
         backendErrorMessage(data, res, 'Falha ao processar arquivo'),
     );
   }
-  return data as ParseImportResponse;
+  return data as unknown as ParseImportResponse;
 }
