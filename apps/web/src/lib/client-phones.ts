@@ -85,15 +85,15 @@ export function mergeNotesWithExtraPhones(
 }
 
 /** Distribui telefones ao salvar: cliente, 1ª propriedade e observações. */
-export function distributePhonesForSave(input: {
+export function distributePhonesForSave<T extends { phone?: string }>(input: {
   phone: string;
   phone2: string;
   extraPhones: string;
-  properties: Array<{ phone?: string }>;
+  properties: T[];
   adminNotes: string;
 }): {
   clientPhone: string | undefined;
-  properties: Array<{ phone?: string }>;
+  properties: T[];
   notes: string | undefined;
 } {
   const all = [
