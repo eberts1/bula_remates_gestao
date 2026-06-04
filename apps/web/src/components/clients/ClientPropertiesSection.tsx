@@ -2,18 +2,13 @@
 
 import type { ClientProperty } from '@/types/client';
 import { emptyProperty } from '@/types/client';
+import { CityUfField } from '@/components/clients/CityUfField';
 
 interface Props {
   properties: ClientProperty[];
   onChange: (properties: ClientProperty[]) => void;
   minCount?: number;
 }
-
-const BRAZIL_STATES = [
-  'AC', 'AL', 'AP', 'AM', 'BA', 'CE', 'DF', 'ES', 'GO', 'MA',
-  'MT', 'MS', 'MG', 'PA', 'PB', 'PR', 'PE', 'PI', 'RJ', 'RN',
-  'RS', 'RO', 'RR', 'SC', 'SP', 'SE', 'TO',
-];
 
 export function ClientPropertiesSection({
   properties,
@@ -23,6 +18,15 @@ export function ClientPropertiesSection({
   function update(index: number, field: keyof ClientProperty, value: string) {
     const next = [...properties];
     next[index] = { ...next[index], [field]: value };
+    onChange(next);
+  }
+
+  function updateLocation(
+    index: number,
+    location: { city: string; state: string },
+  ) {
+    const next = [...properties];
+    next[index] = { ...next[index], ...location };
     onChange(next);
   }
 
@@ -75,37 +79,18 @@ export function ClientPropertiesSection({
                 onChange={(e) => update(index, 'farmName', e.target.value)}
               />
             </label>
-            <label>
-              Cidade *
-              <input
+            <div className="form-full-width client-property-location">
+              <p className="city-uf-hint">
+                Cidade e UF{minCount > 0 ? ' *' : ''} — sugestões do IBGE ao
+                digitar (selecione a UF primeiro)
+              </p>
+              <CityUfField
+                city={prop.city}
+                state={prop.state}
                 required={minCount > 0}
-                value={prop.city}
-                onChange={(e) => update(index, 'city', e.target.value)}
+                onChange={(next) => updateLocation(index, next)}
               />
-            </label>
-            <label>
-              Estado *
-              <select
-                required={minCount > 0}
-                value={prop.state}
-                onChange={(e) => update(index, 'state', e.target.value)}
-                style={{
-                  background: 'var(--bg)',
-                  color: 'var(--text)',
-                  border: '1px solid var(--border)',
-                  borderRadius: 8,
-                  padding: '0.65rem 0.85rem',
-                  width: '100%',
-                }}
-              >
-                <option value="">UF</option>
-                {BRAZIL_STATES.map((uf) => (
-                  <option key={uf} value={uf}>
-                    {uf}
-                  </option>
-                ))}
-              </select>
-            </label>
+            </div>
             <label>
               Telefone da propriedade
               <input

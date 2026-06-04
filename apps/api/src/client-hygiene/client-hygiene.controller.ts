@@ -19,18 +19,31 @@ export class ClientHygieneController {
     @Query('q') q?: string,
     @Query('page') page?: string,
     @Query('limit') limit?: string,
+    @Query('state') state?: string,
+    @Query('ddd') ddd?: string,
   ) {
     return this.service.list(user, {
       issue,
       q,
       page: page ? Number(page) : undefined,
       limit: limit ? Number(limit) : undefined,
+      state,
+      ddd,
     });
   }
 
   @Get('summary')
   summary(@CurrentUser() user: JwtPayload) {
     return this.service.summary(user);
+  }
+
+  @Get('duplicates')
+  duplicates(
+    @CurrentUser() user: JwtPayload,
+    @Query('q') q?: string,
+    @Query('strategies') strategies?: string,
+  ) {
+    return this.service.findDuplicates(user, { q, strategies });
   }
 
   @Patch('bulk-tags')

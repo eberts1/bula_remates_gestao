@@ -36,9 +36,45 @@ export interface HygieneSummary {
   tags: number;
   incomplete: number;
   any: number;
+  duplicateGroups?: number;
+  duplicateClients?: number;
 }
 
-export type HygieneFilter = HygieneIssue | 'any';
+export type HygieneFilter = HygieneIssue | 'any' | 'duplicates';
+
+export type DuplicateMatchReason =
+  | 'document'
+  | 'email'
+  | 'phone'
+  | 'nameExact'
+  | 'nameFuzzy'
+  | 'nameCity'
+  | 'farmName';
+
+export interface DuplicateGroup {
+  id: string;
+  reasons: DuplicateMatchReason[];
+  clients: Client[];
+}
+
+export interface DuplicatesListResponse {
+  groups: DuplicateGroup[];
+  totalGroups: number;
+  totalClients: number;
+}
+
+export interface MergeResolution {
+  name: string;
+  document?: string | null;
+  email?: string | null;
+  phone?: string | null;
+  addressFull?: string | null;
+  animalType?: string | null;
+  animalSex?: string | null;
+  livestockCategory?: string | null;
+  intentionIds?: string[];
+  properties?: Client['properties'];
+}
 
 export const ISSUE_LABELS: Record<HygieneIssue, string> = {
   location: 'Localização',
@@ -50,4 +86,14 @@ export const LOCATION_ISSUE_LABELS: Record<LocationIssueKind, string> = {
   invalid_uf: 'UF inválida',
   empty_city: 'Cidade vazia',
   unknown_city: 'Cidade não encontrada',
+};
+
+export const DUPLICATE_REASON_LABELS: Record<DuplicateMatchReason, string> = {
+  document: 'Documento',
+  email: 'E-mail',
+  phone: 'Telefone',
+  nameExact: 'Nome igual',
+  nameFuzzy: 'Nome parecido',
+  nameCity: 'Nome + cidade',
+  farmName: 'Fazenda',
 };

@@ -11,13 +11,13 @@ export async function GET(req: NextRequest) {
 
   const { searchParams } = new URL(req.url);
   const query = new URLSearchParams();
-  for (const key of ['issue', 'q', 'page', 'limit', 'state', 'ddd']) {
+  for (const key of ['q', 'strategies']) {
     const value = searchParams.get(key);
     if (value) query.set(key, value);
   }
 
   try {
-    const data = await apiFetch(`/client-hygiene?${query}`, {
+    const data = await apiFetch(`/client-hygiene/duplicates?${query}`, {
       accessToken: token,
     });
     return NextResponse.json(data);

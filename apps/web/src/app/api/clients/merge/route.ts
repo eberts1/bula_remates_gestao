@@ -3,22 +3,18 @@ import { NextRequest, NextResponse } from 'next/server';
 import { apiFetch } from '@/lib/api';
 import { getAccessToken } from '@/lib/auth';
 
-export async function GET(req: NextRequest) {
+export async function POST(req: NextRequest) {
   const token = await getAccessToken();
   if (!token) {
     return NextResponse.json({ message: 'Não autenticado' }, { status: 401 });
   }
 
-  const { searchParams } = new URL(req.url);
-  const query = new URLSearchParams();
-  for (const key of ['issue', 'q', 'page', 'limit', 'state', 'ddd']) {
-    const value = searchParams.get(key);
-    if (value) query.set(key, value);
-  }
-
   try {
-    const data = await apiFetch(`/client-hygiene?${query}`, {
+    const body = await req.json();
+    const data = await apiFetch('/clients/merge', {
+      method: 'POST',
       accessToken: token,
+      body: JSON.stringify(body),
     });
     return NextResponse.json(data);
   } catch (e) {

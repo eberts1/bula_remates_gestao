@@ -4,7 +4,16 @@ import { JwtPayload } from '../auth/auth.types';
 import { PrismaService } from '../prisma/prisma.service';
 import { ClientsService } from '../clients/clients.service';
 import { GeoService, LocationIssue, CityMatch } from '../geo/geo.service';
+import { digitsOnly } from '../clients/client-search.util';
 import { BulkTagsDto } from './dto/bulk-tags.dto';
+import {
+  buildDuplicateGroups,
+  DUPLICATE_STRATEGIES,
+  type DuplicateMatchReason,
+  type DuplicateStrategy,
+} from './duplicate-match.util';
+
+export type { DuplicateMatchReason, DuplicateStrategy };
 
 const HYGIENE_ISSUES = ['location', 'tags', 'incomplete'] as const;
 export type HygieneIssue = (typeof HYGIENE_ISSUES)[number];
@@ -44,7 +53,14 @@ export class ClientHygieneService {
 
   async list(
     user: JwtPayload,
-    params: { issue?: string; q?: string; page?: number; limit?: number },
+    params: {
+      issue?: string;
+      q?: string;
+      page?: number;
+      limit?: number;
+      state?: string;
+      ddd?: string;
+    },
   ) {
     const page = params.page && params.page > 0 ? params.page : 1;
     const limit = params.limit && params.limit > 0 ? params.limit : 50;
@@ -71,11 +87,20 @@ export class ClientHygieneService {
       include: hygieneInclude,
     });
 
+    const stateFilter = params.state?.trim().toUpperCase();
+    const dddFilter = digitsOnly(params.ddd ?? '').slice(0, 2);
+
     const evaluated = clients
       .map((client) => this.evaluate(client))
       .filter((entry) => entry.issues.length > 0)
       .filter((entry) =>
         issueFilter === 'any' ? true : entry.issues.includes(issueFilter),
+      )
+      .filter((entry) =>
+        stateFilter ? this.matchesState(entry, stateFilter) : true,
+      )
+      .filter((entry) =>
+        dddFilter.length === 2 ? this.matchesDdd(entry, dddFilter) : true,
       );
 
     const total = evaluated.length;
@@ -97,14 +122,120 @@ export class ClientHygieneService {
       include: hygieneInclude,
     });
 
-    const counts = { location: 0, tags: 0, incomplete: 0, any: 0 };
+    const counts = {
+      location: 0,
+      tags: 0,
+      incomplete: 0,
+      any: 0,
+      duplicateGroups: 0,
+      duplicateClients: 0,
+    };
     for (const client of clients) {
       const { issues } = this.evaluate(client);
       if (issues.length === 0) continue;
       counts.any += 1;
       for (const issue of issues) counts[issue] += 1;
     }
+
+    const dupSummary = this.computeDuplicatesSummary(clients);
+    counts.duplicateGroups = dupSummary.groups;
+    counts.duplicateClients = dupSummary.clients;
+
     return counts;
+  }
+
+  async findDuplicates(
+    user: JwtPayload,
+    params: { q?: string; strategies?: string },
+  ) {
+    const clients = await this.loadHygieneClients(user.tenantId, params.q);
+    const strategies = this.parseStrategies(params.strategies);
+    const rawGroups = buildDuplicateGroups(
+      clients.map((c) => ({
+        id: c.id,
+        name: c.name,
+        document: c.document,
+        email: c.email,
+        phone: c.phone,
+        properties: c.properties.map((p) => ({
+          farmName: p.farmName,
+          city: p.city,
+          state: p.state,
+          phone: p.phone,
+        })),
+      })),
+      strategies,
+    );
+
+    const groups = rawGroups.map((g, index) => ({
+      id: `group-${index}`,
+      reasons: g.reasons,
+      clients: g.indices.map((i) =>
+        this.clientsService.serializeClient(clients[i] as never),
+      ),
+    }));
+
+    return {
+      groups,
+      totalGroups: groups.length,
+      totalClients: groups.reduce((sum, g) => sum + g.clients.length, 0),
+    };
+  }
+
+  private computeDuplicatesSummary(
+    clients: Awaited<ReturnType<typeof this.loadHygieneClients>>,
+  ) {
+    const rawGroups = buildDuplicateGroups(
+      clients.map((c) => ({
+        id: c.id,
+        name: c.name,
+        document: c.document,
+        email: c.email,
+        phone: c.phone,
+        properties: c.properties.map((p) => ({
+          farmName: p.farmName,
+          city: p.city,
+          state: p.state,
+          phone: p.phone,
+        })),
+      })),
+    );
+    return {
+      groups: rawGroups.length,
+      clients: rawGroups.reduce((sum, g) => sum + g.indices.length, 0),
+    };
+  }
+
+  private async loadHygieneClients(tenantId: string, q?: string) {
+    const where: Prisma.ClientWhereInput = {
+      tenantId,
+      deletedAt: null,
+      isDefault: false,
+      ...(q
+        ? {
+            OR: [
+              { name: { contains: q, mode: 'insensitive' } },
+              { document: { contains: q, mode: 'insensitive' } },
+              { email: { contains: q, mode: 'insensitive' } },
+            ],
+          }
+        : {}),
+    };
+
+    return this.prisma.client.findMany({
+      where,
+      orderBy: { name: 'asc' },
+      include: hygieneInclude,
+    });
+  }
+
+  private parseStrategies(raw?: string): DuplicateStrategy[] {
+    if (!raw?.trim()) return [...DUPLICATE_STRATEGIES];
+    const parts = raw.split(',').map((s) => s.trim());
+    const valid = parts.filter((s): s is DuplicateStrategy =>
+      (DUPLICATE_STRATEGIES as readonly string[]).includes(s),
+    );
+    return valid.length > 0 ? valid : [...DUPLICATE_STRATEGIES];
   }
 
   async bulkTags(user: JwtPayload, dto: BulkTagsDto) {
@@ -145,6 +276,33 @@ export class ClientHygieneService {
     });
 
     return { updated: ids.length };
+  }
+
+  private matchesState(
+    client: { properties: { state: string }[] },
+    state: string,
+  ): boolean {
+    return client.properties.some(
+      (p) => p.state.trim().toUpperCase() === state,
+    );
+  }
+
+  private matchesDdd(
+    client: {
+      phone: string | null;
+      properties: { phone: string | null }[];
+    },
+    ddd: string,
+  ): boolean {
+    const phones = [
+      client.phone,
+      ...client.properties.map((p) => p.phone),
+    ].filter((p): p is string => Boolean(p?.trim()));
+
+    return phones.some((phone) => {
+      const digits = digitsOnly(phone);
+      return new RegExp(`^(55)?${ddd}`).test(digits);
+    });
   }
 
   private normalizeIssue(issue?: string): HygieneIssue | 'any' {

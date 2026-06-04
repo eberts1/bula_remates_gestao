@@ -37,6 +37,7 @@ import { ClientsService } from './clients.service';
 import { CreateClientDto } from './dto/create-client.dto';
 
 import { UpdateClientDto } from './dto/update-client.dto';
+import { MergeClientsDto } from './dto/merge-clients.dto';
 
 
 
@@ -113,6 +114,18 @@ export class ClientsController {
   create(@CurrentUser() user: JwtPayload, @Body() dto: CreateClientDto) {
 
     return this.clientsService.create(user, dto);
+
+  }
+
+
+
+  @Post('merge')
+
+  @Roles(TenantRole.owner, TenantRole.admin, TenantRole.member)
+
+  merge(@CurrentUser() user: JwtPayload, @Body() dto: MergeClientsDto) {
+
+    return this.clientsService.merge(user, dto);
 
   }
 

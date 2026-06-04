@@ -5,13 +5,18 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 
 import { AppShell } from '@/components/AppShell';
 import { ClientPagination } from '@/components/clients/ClientPagination';
+import { DuplicateGroupCard } from '@/components/clients/DuplicateGroupCard';
 import { HygieneQueueTable } from '@/components/clients/HygieneQueueTable';
 import { HygieneReviewDrawer } from '@/components/clients/HygieneReviewDrawer';
+import { MergeClientsDrawer } from '@/components/clients/MergeClientsDrawer';
 import { ClientTagsSection } from '@/components/clients/ClientTagsSection';
+import { BRAZIL_STATES } from '@/components/clients/CityUfField';
 import type { TenantIntention } from '@/types/client-import';
 import type {
+  DuplicateGroup,
   HygieneClient,
   HygieneFilter,
+  HygieneIssue,
   HygieneSummary,
 } from '@/types/client-hygiene';
 import { ISSUE_LABELS } from '@/types/client-hygiene';
@@ -23,6 +28,7 @@ const FILTERS: { id: HygieneFilter; label: string }[] = [
   { id: 'location', label: ISSUE_LABELS.location },
   { id: 'tags', label: ISSUE_LABELS.tags },
   { id: 'incomplete', label: ISSUE_LABELS.incomplete },
+  { id: 'duplicates', label: 'Duplicados' },
 ];
 
 const emptyBatchTags = () => ({
@@ -36,6 +42,9 @@ export default function ClientHygienePage() {
   const [filter, setFilter] = useState<HygieneFilter>('any');
   const [search, setSearch] = useState('');
   const [debouncedSearch, setDebouncedSearch] = useState('');
+  const [stateFilter, setStateFilter] = useState('');
+  const [dddFilter, setDddFilter] = useState('');
+  const [debouncedDdd, setDebouncedDdd] = useState('');
   const [page, setPage] = useState(1);
 
   const [clients, setClients] = useState<HygieneClient[]>([]);
@@ -51,7 +60,20 @@ export default function ClientHygienePage() {
   const [batchTags, setBatchTags] = useState(emptyBatchTags);
   const [applyingBatch, setApplyingBatch] = useState(false);
 
+  const [duplicateGroups, setDuplicateGroups] = useState<DuplicateGroup[]>([]);
+  const [dupTotalGroups, setDupTotalGroups] = useState(0);
+
   const [reviewIndex, setReviewIndex] = useState<number | null>(null);
+  const [reviewDirty, setReviewDirty] = useState(false);
+  const [mergeGroup, setMergeGroup] = useState<DuplicateGroup | null>(null);
+  const [mergeSelectedIds, setMergeSelectedIds] = useState<string[] | null>(
+    null,
+  );
+
+  function openMerge(group: DuplicateGroup, selectedIds?: string[]) {
+    setMergeGroup(group);
+    setMergeSelectedIds(selectedIds ?? null);
+  }
 
   useEffect(() => {
     fetch('/api/tenant-intentions')
@@ -66,8 +88,13 @@ export default function ClientHygienePage() {
   }, [search]);
 
   useEffect(() => {
+    const t = setTimeout(() => setDebouncedDdd(dddFilter.replace(/\D/g, '')), 300);
+    return () => clearTimeout(t);
+  }, [dddFilter]);
+
+  useEffect(() => {
     setPage(1);
-  }, [debouncedSearch, filter]);
+  }, [debouncedSearch, filter, stateFilter, debouncedDdd]);
 
   const loadSummary = useCallback(() => {
     fetch('/api/client-hygiene/summary')
@@ -76,7 +103,31 @@ export default function ClientHygienePage() {
       .catch(() => {});
   }, []);
 
+  const loadDuplicates = useCallback(async () => {
+    setLoading(true);
+    setError('');
+    try {
+      const params = new URLSearchParams();
+      if (debouncedSearch) params.set('q', debouncedSearch);
+
+      const res = await fetch(`/api/client-hygiene/duplicates?${params}`);
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.message ?? 'Erro ao carregar');
+      setDuplicateGroups(data.groups ?? []);
+      setDupTotalGroups(data.totalGroups ?? 0);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Erro ao carregar');
+    } finally {
+      setLoading(false);
+    }
+  }, [debouncedSearch]);
+
   const load = useCallback(async () => {
+    if (filter === 'duplicates') {
+      await loadDuplicates();
+      return;
+    }
+
     setLoading(true);
     setError('');
     try {
@@ -86,6 +137,8 @@ export default function ClientHygienePage() {
         limit: String(PAGE_LIMIT),
       });
       if (debouncedSearch) params.set('q', debouncedSearch);
+      if (stateFilter) params.set('state', stateFilter);
+      if (debouncedDdd.length === 2) params.set('ddd', debouncedDdd);
 
       const res = await fetch(`/api/client-hygiene?${params}`);
       const data = await res.json();
@@ -99,7 +152,7 @@ export default function ClientHygienePage() {
     } finally {
       setLoading(false);
     }
-  }, [filter, page, debouncedSearch]);
+  }, [filter, page, debouncedSearch, stateFilter, debouncedDdd, loadDuplicates]);
 
   useEffect(() => {
     void load();
@@ -162,8 +215,25 @@ export default function ClientHygienePage() {
 
   function closeReview() {
     setReviewIndex(null);
+    setReviewDirty(false);
     void load();
     loadSummary();
+  }
+
+  function openReview(client: HygieneClient) {
+    const index = clients.findIndex((c) => c.id === client.id);
+    if (index < 0) return;
+    if (
+      reviewIndex !== null &&
+      reviewDirty &&
+      index !== reviewIndex &&
+      !window.confirm(
+        'Há alterações não salvas. Deseja sair sem salvar as mudanças?',
+      )
+    ) {
+      return;
+    }
+    setReviewIndex(index);
   }
 
   function reviewNext() {
@@ -195,18 +265,21 @@ export default function ClientHygienePage() {
           fontSize: '0.9rem',
         }}
       >
-        Revise clientes com localização inválida, sem etiquetas ou cadastro
-        incompleto. <Link href="/clients">Voltar para clientes</Link>
+        Revise clientes com localização inválida, sem etiquetas, cadastro
+        incompleto ou duplicados para unificar.{' '}
+        <Link href="/clients">Voltar para clientes</Link>
       </p>
 
       <div className="hygiene-filters">
         {FILTERS.map((f) => {
           const count =
-            summary && f.id !== 'any'
-              ? summary[f.id]
-              : summary
-                ? summary.any
-                : undefined;
+            summary && f.id === 'duplicates'
+              ? summary.duplicateGroups
+              : summary && f.id !== 'any' && f.id !== 'duplicates'
+                ? summary[f.id as HygieneIssue]
+                : summary
+                  ? summary.any
+                  : undefined;
           return (
             <button
               key={f.id}
@@ -223,42 +296,115 @@ export default function ClientHygienePage() {
         })}
       </div>
 
-      <label className="clients-search" style={{ marginBottom: '1rem' }}>
-        <span className="sr-only">Buscar cliente</span>
-        <input
-          type="search"
-          placeholder="Nome, documento ou e-mail..."
-          value={search}
-          onChange={(e) => setSearch(e.target.value)}
-        />
-      </label>
+      <div className="hygiene-toolbar">
+        <label className="clients-search hygiene-toolbar-search">
+          <span className="sr-only">Buscar cliente</span>
+          <input
+            type="search"
+            placeholder="Nome, documento ou e-mail..."
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+          />
+        </label>
+
+        <label className="hygiene-location-filter">
+          <span>Estado</span>
+          <select
+            value={stateFilter}
+            onChange={(e) => setStateFilter(e.target.value)}
+          >
+            <option value="">Todos</option>
+            {BRAZIL_STATES.map((uf) => (
+              <option key={uf} value={uf}>
+                {uf}
+              </option>
+            ))}
+          </select>
+        </label>
+
+        <label className="hygiene-location-filter">
+          <span>DDD</span>
+          <input
+            type="text"
+            inputMode="numeric"
+            maxLength={2}
+            placeholder="Ex.: 65"
+            value={dddFilter}
+            onChange={(e) =>
+              setDddFilter(e.target.value.replace(/\D/g, '').slice(0, 2))
+            }
+          />
+        </label>
+
+        {(stateFilter || dddFilter) && (
+          <button
+            type="button"
+            className="ghost hygiene-clear-location"
+            onClick={() => {
+              setStateFilter('');
+              setDddFilter('');
+            }}
+          >
+            Limpar localização
+          </button>
+        )}
+      </div>
 
       {error && (
         <p style={{ color: 'var(--danger)', marginBottom: '1rem' }}>{error}</p>
       )}
 
-      <div className="card hygiene-batch-card">
-        <h3 className="form-section-title">Etiquetar selecionados</h3>
-        <ClientTagsSection
-          value={batchTags}
-          intentions={intentions}
-          onChange={setBatchTags}
-        />
-        <button
-          type="button"
-          className="ghost"
-          style={{ marginTop: '0.75rem' }}
-          disabled={selectedIds.size === 0 || !hasBatchTags || applyingBatch}
-          onClick={() => void applyBatchTags()}
-        >
-          {applyingBatch
-            ? 'Aplicando…'
-            : `Aplicar etiquetas a ${selectedIds.size} cliente(s)`}
-        </button>
-      </div>
+      {filter !== 'duplicates' && (
+        <div className="card hygiene-batch-card">
+          <h3 className="form-section-title">Etiquetar selecionados</h3>
+          <ClientTagsSection
+            value={batchTags}
+            intentions={intentions}
+            onChange={setBatchTags}
+          />
+          <button
+            type="button"
+            className="ghost"
+            style={{ marginTop: '0.75rem' }}
+            disabled={selectedIds.size === 0 || !hasBatchTags || applyingBatch}
+            onClick={() => void applyBatchTags()}
+          >
+            {applyingBatch
+              ? 'Aplicando…'
+              : `Aplicar etiquetas a ${selectedIds.size} cliente(s)`}
+          </button>
+        </div>
+      )}
 
       {loading ? (
         <p style={{ color: 'var(--muted)' }}>Carregando…</p>
+      ) : filter === 'duplicates' ? (
+        duplicateGroups.length === 0 ? (
+          <p style={{ color: 'var(--muted)' }}>
+            Nenhum grupo de cadastros duplicados encontrado.
+          </p>
+        ) : (
+          <>
+            <p
+              style={{
+                color: 'var(--muted)',
+                fontSize: '0.875rem',
+                margin: '1rem 0 0.5rem',
+              }}
+            >
+              {dupTotalGroups} grupo(s) de possíveis duplicados
+            </p>
+            <div className="hygiene-dup-list">
+              {duplicateGroups.map((group) => (
+                <DuplicateGroupCard
+                  key={group.id}
+                  group={group}
+                  onMerge={openMerge}
+                />
+              ))}
+            </div>
+          </>
+        )
       ) : clients.length === 0 ? (
         <p style={{ color: 'var(--muted)' }}>
           Nenhum cliente com pendências neste filtro.
@@ -279,9 +425,7 @@ export default function ClientHygienePage() {
             selectedIds={selectedIds}
             onToggleSelect={toggleSelect}
             onToggleAll={toggleAll}
-            onReview={(client) =>
-              setReviewIndex(clients.findIndex((c) => c.id === client.id))
-            }
+            onReview={openReview}
           />
           <ClientPagination
             page={page}
@@ -298,9 +442,26 @@ export default function ClientHygienePage() {
         onClose={closeReview}
         onSaved={closeReview}
         onSaveAndNext={reviewNext}
+        onDirtyChange={setReviewDirty}
         hasNext={
           reviewIndex !== null && reviewIndex + 1 < clients.length
         }
+      />
+
+      <MergeClientsDrawer
+        group={mergeGroup}
+        initialSelectedIds={mergeSelectedIds}
+        intentions={intentions}
+        onClose={() => {
+          setMergeGroup(null);
+          setMergeSelectedIds(null);
+        }}
+        onMerged={() => {
+          setMergeGroup(null);
+          setMergeSelectedIds(null);
+          void load();
+          loadSummary();
+        }}
       />
     </AppShell>
   );

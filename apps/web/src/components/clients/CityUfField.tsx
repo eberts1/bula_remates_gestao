@@ -3,7 +3,7 @@
 import { useEffect, useRef, useState } from 'react';
 import type { CityMatch } from '@/types/client-hygiene';
 
-const BRAZIL_STATES = [
+export const BRAZIL_STATES = [
   'AC', 'AL', 'AP', 'AM', 'BA', 'CE', 'DF', 'ES', 'GO', 'MA',
   'MT', 'MS', 'MG', 'PA', 'PB', 'PR', 'PE', 'PI', 'RJ', 'RN',
   'RS', 'RO', 'RR', 'SC', 'SP', 'SE', 'TO',
@@ -15,6 +15,7 @@ interface Props {
   onChange: (next: { city: string; state: string }) => void;
   invalid?: boolean;
   suggestions?: CityMatch[];
+  required?: boolean;
 }
 
 export function CityUfField({
@@ -23,10 +24,11 @@ export function CityUfField({
   onChange,
   invalid,
   suggestions = [],
+  required = false,
 }: Props) {
   const [options, setOptions] = useState<CityMatch[]>([]);
   const [open, setOpen] = useState(false);
-  const boxRef = useRef<HTMLLabelElement | null>(null);
+  const fieldRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
     if (!state || !open) {
@@ -50,7 +52,7 @@ export function CityUfField({
 
   useEffect(() => {
     function onClickOutside(e: MouseEvent) {
-      if (boxRef.current && !boxRef.current.contains(e.target as Node)) {
+      if (fieldRef.current && !fieldRef.current.contains(e.target as Node)) {
         setOpen(false);
       }
     }
@@ -63,12 +65,18 @@ export function CityUfField({
     setOpen(false);
   }
 
+  const showOptions = open && options.length > 0;
+
   return (
-    <div className="city-uf-field">
-      <label className="city-uf-city" ref={boxRef}>
+    <div
+      ref={fieldRef}
+      className={`city-uf-field${showOptions ? ' city-uf-field--open' : ''}`}
+    >
+      <label className="city-uf-city">
         Cidade
         <input
           value={city}
+          required={required}
           onChange={(e) => {
             onChange({ city: e.target.value, state });
             setOpen(true);
@@ -76,25 +84,19 @@ export function CityUfField({
           onFocus={() => setOpen(true)}
           className={invalid ? 'city-uf-invalid' : undefined}
           autoComplete="off"
+          placeholder={state ? 'Digite para buscar…' : 'Selecione a UF'}
         />
-        {open && options.length > 0 && (
-          <ul className="city-uf-options">
-            {options.map((o) => (
-              <li key={o.id}>
-                <button type="button" onClick={() => pick(o)}>
-                  {o.name}
-                </button>
-              </li>
-            ))}
-          </ul>
-        )}
       </label>
 
       <label className="city-uf-state">
         UF
         <select
           value={state}
-          onChange={(e) => onChange({ city, state: e.target.value })}
+          required={required}
+          onChange={(e) => {
+            onChange({ city, state: e.target.value });
+            if (e.target.value) setOpen(true);
+          }}
         >
           <option value="">UF</option>
           {BRAZIL_STATES.map((uf) => (
@@ -104,6 +106,18 @@ export function CityUfField({
           ))}
         </select>
       </label>
+
+      {showOptions && (
+        <ul className="city-uf-options" role="listbox" aria-label="Cidades">
+          {options.map((o) => (
+            <li key={o.id} role="option">
+              <button type="button" onClick={() => pick(o)}>
+                {o.name}
+              </button>
+            </li>
+          ))}
+        </ul>
+      )}
 
       {suggestions.length > 0 && (
         <div className="city-uf-suggestions">

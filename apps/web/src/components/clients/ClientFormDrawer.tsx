@@ -40,13 +40,12 @@ export function ClientFormDrawer({ open, client, onClose, onSaved }: Props) {
 
   return (
     <div className="client-drawer-root" role="presentation">
-      <button
-        type="button"
-        className="client-drawer-backdrop"
-        aria-label="Fechar"
-        onClick={onClose}
-      />
-      <aside className="client-drawer" role="dialog" aria-modal="true" aria-label={title}>
+      <aside
+        className="client-drawer client-drawer--fullscreen"
+        role="dialog"
+        aria-modal="true"
+        aria-label={title}
+      >
         <header className="client-drawer-header">
           <h2>{title}</h2>
           <button type="button" className="ghost client-drawer-close" onClick={onClose}>
@@ -55,19 +54,21 @@ export function ClientFormDrawer({ open, client, onClose, onSaved }: Props) {
         </header>
 
         <div className="client-drawer-body">
-          <ClientForm
-            client={client}
-            onSaved={handleSaved}
-            onClear={onClose}
-            showNewButton={false}
-            hideTitle
-          />
+          <div className="client-drawer-inner">
+            <ClientForm
+              client={client}
+              onSaved={handleSaved}
+              onClear={onClose}
+              showNewButton={false}
+              hideTitle
+            />
 
-          {client ? (
-            <ClientFormLinksPanel clientId={client.id} />
-          ) : (
-            <ClientFormLinksPanel showStaticLink />
-          )}
+            {client ? (
+              <ClientFormLinksPanel clientId={client.id} />
+            ) : (
+              <ClientFormLinksPanel showStaticLink />
+            )}
+          </div>
         </div>
       </aside>
     </div>

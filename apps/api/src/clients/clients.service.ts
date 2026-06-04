@@ -13,6 +13,7 @@ import {
 import { CreateClientDto } from './dto/create-client.dto';
 import { ClientPropertyDto } from './dto/client-property.dto';
 import { UpdateClientDto } from './dto/update-client.dto';
+import { MergeClientsDto } from './dto/merge-clients.dto';
 
 const clientInclude = {
   responsible: { select: { id: true, name: true } },
@@ -263,6 +264,180 @@ export class ClientsService {
         sortOrder: count,
       },
     });
+  }
+
+  async merge(user: JwtPayload, dto: MergeClientsDto) {
+    const mergedIds = dto.mergedIds.filter((id) => id !== dto.masterId);
+    if (mergedIds.length === 0) {
+      throw new BadRequestException('Informe ao menos um cadastro para unificar');
+    }
+
+    const allIds = [dto.masterId, ...mergedIds];
+    const clients = await this.prisma.client.findMany({
+      where: {
+        id: { in: allIds },
+        tenantId: user.tenantId,
+        deletedAt: null,
+      },
+      include: clientInclude,
+    });
+
+    if (clients.length !== allIds.length) {
+      throw new NotFoundException('Um ou mais clientes não foram encontrados');
+    }
+
+    const master = clients.find((c) => c.id === dto.masterId);
+    if (!master) throw new NotFoundException('Cliente principal não encontrado');
+    if (master.isDefault) {
+      throw new BadRequestException('Não é possível unificar o cliente padrão');
+    }
+
+    const toMerge = clients.filter((c) => mergedIds.includes(c.id));
+    if (toMerge.some((c) => c.isDefault)) {
+      throw new BadRequestException('Não é possível unificar o cliente padrão');
+    }
+
+    const altContacts = this.collectAlternateContacts(
+      clients,
+      dto.resolved.email ?? null,
+      dto.resolved.phone ?? null,
+    );
+
+    await this.prisma.$transaction(async (tx) => {
+      for (const id of mergedIds) {
+        await tx.clientProperty.updateMany({
+          where: { clientId: id, tenantId: user.tenantId },
+          data: { clientId: dto.masterId },
+        });
+        await tx.document.updateMany({
+          where: { clientId: id, tenantId: user.tenantId },
+          data: { clientId: dto.masterId },
+        });
+        await tx.clientFormToken.updateMany({
+          where: { clientId: id, tenantId: user.tenantId },
+          data: { clientId: dto.masterId },
+        });
+      }
+
+      const intentionSet = new Set<string>(
+        dto.resolved.intentionIds ?? [
+          ...master.intentions.map((i) => i.intentionId),
+          ...toMerge.flatMap((c) =>
+            c.intentions.map((i) => i.intentionId),
+          ),
+        ],
+      );
+      await this.syncClientIntentions(tx, dto.masterId, [...intentionSet]);
+
+      if (dto.resolved.properties !== undefined) {
+        await this.syncProperties(
+          tx,
+          user.tenantId,
+          dto.masterId,
+          dto.resolved.properties,
+        );
+      } else {
+        await this.dedupeMasterProperties(tx, user.tenantId, dto.masterId);
+      }
+
+      const notesAppend =
+        altContacts.length > 0
+          ? `\n\nContatos alternativos: ${altContacts.join('; ')}`
+          : '';
+      const existingNotes = master.notes?.trim() ?? '';
+      const newNotes = existingNotes
+        ? `${existingNotes}${notesAppend}`
+        : notesAppend.trim() || null;
+
+      await tx.client.update({
+        where: { id: dto.masterId },
+        data: {
+          name: dto.resolved.name,
+          document: dto.resolved.document?.trim() || null,
+          email: dto.resolved.email?.trim() || null,
+          phone: dto.resolved.phone?.trim() || null,
+          addressFull: dto.resolved.addressFull?.trim() || null,
+          animalType: dto.resolved.animalType ?? null,
+          animalSex: dto.resolved.animalSex ?? null,
+          livestockCategory: dto.resolved.livestockCategory ?? null,
+          ...(notesAppend ? { notes: newNotes } : {}),
+        },
+      });
+
+      await tx.client.updateMany({
+        where: { id: { in: mergedIds }, tenantId: user.tenantId },
+        data: { deletedAt: new Date(), active: false },
+      });
+    });
+
+    return this.findOne(user, dto.masterId);
+  }
+
+  private collectAlternateContacts(
+    clients: Array<{ email: string | null; phone: string | null }>,
+    chosenEmail: string | null,
+    chosenPhone: string | null,
+  ): string[] {
+    const alts: string[] = [];
+    const chosenEmailNorm = chosenEmail?.trim().toLowerCase() ?? '';
+    const chosenPhoneNorm = chosenPhone?.replace(/\D/g, '') ?? '';
+
+    for (const c of clients) {
+      const email = c.email?.trim();
+      if (
+        email &&
+        email.toLowerCase() !== chosenEmailNorm &&
+        !alts.includes(email)
+      ) {
+        alts.push(email);
+      }
+      const phone = c.phone?.trim();
+      if (phone) {
+        const digits = phone.replace(/\D/g, '');
+        if (digits && digits !== chosenPhoneNorm && !alts.includes(phone)) {
+          alts.push(phone);
+        }
+      }
+    }
+    return alts;
+  }
+
+  private async dedupeMasterProperties(
+    tx: Prisma.TransactionClient,
+    tenantId: string,
+    clientId: string,
+  ) {
+    const properties = await tx.clientProperty.findMany({
+      where: { clientId, tenantId },
+      orderBy: { sortOrder: 'asc' },
+    });
+
+    const seen = new Set<string>();
+    const toDelete: string[] = [];
+
+    for (const p of properties) {
+      const key = `${p.farmName.toLowerCase()}|${p.city.toLowerCase()}|${p.state.toUpperCase()}`;
+      if (seen.has(key)) {
+        toDelete.push(p.id);
+      } else {
+        seen.add(key);
+      }
+    }
+
+    if (toDelete.length > 0) {
+      await tx.clientProperty.deleteMany({ where: { id: { in: toDelete } } });
+    }
+
+    const remaining = await tx.clientProperty.findMany({
+      where: { clientId, tenantId },
+      orderBy: { sortOrder: 'asc' },
+    });
+    for (let i = 0; i < remaining.length; i++) {
+      await tx.clientProperty.update({
+        where: { id: remaining[i].id },
+        data: { sortOrder: i },
+      });
+    }
   }
 
   async remove(user: JwtPayload, id: string) {
