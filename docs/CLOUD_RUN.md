@@ -64,7 +64,9 @@ API_URL=https://SUA-URL.run.app
 NEXT_PUBLIC_API_URL=https://SUA-URL.run.app
 ```
 
-`WEB_URL` no Cloud Run = mesma URL da Vercel (ex. `https://seu-app.vercel.app`).
+`WEB_URL` no Cloud Run = **exatamente** a URL do app na Vercel (ex. `https://seu-app.vercel.app`), sem barra no final. A importação de PDF envia o arquivo **direto do navegador** para a API (CORS); se `WEB_URL` estiver errado, o upload falha.
+
+Importação de PDFs grandes: timeout da API **300s** e memória **1Gi** (ver flags no deploy acima).
 
 ## 4. Testes
 

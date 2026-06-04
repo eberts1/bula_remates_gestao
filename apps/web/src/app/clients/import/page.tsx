@@ -25,7 +25,7 @@ import {
 } from '@/types/client-import';
 import type { LivestockCategory } from '@docs/shared';
 import { fetchAuthed, refreshSession } from '@/lib/client-auth';
-import { parseResponseJson } from '@/lib/api';
+import { parseImportFileDirect } from '@/lib/client-import-parse';
 import {
   clearImportResume,
   loadImportResume,
@@ -114,7 +114,8 @@ export default function ClientImportPage() {
         phase: 'parsing',
         current: 0,
         total: 0,
-        label: 'Extraindo dados do arquivo…',
+        label:
+          'Extraindo dados do arquivo… PDFs grandes podem levar alguns minutos.',
         indeterminate: true,
       });
       setError(null);
@@ -135,20 +136,7 @@ export default function ClientImportPage() {
           }),
         );
 
-        const res = await fetchAuthed('/api/clients/import/parse', {
-          method: 'POST',
-          body: formData,
-        });
-        const data = (await parseResponseJson(res)) as ParseImportResponse & {
-          message?: string;
-        };
-        if (!res.ok) {
-          const fallback =
-            res.status === 504 || res.status === 502
-              ? 'O processamento do PDF demorou demais. Exporte só as páginas necessárias (ex.: clientes 1–200) e tente de novo.'
-              : 'Falha ao processar arquivo';
-          throw new Error(data.message ?? fallback);
-        }
+        const data = await parseImportFileDirect(formData);
 
         const suggested = data.suggestedTags?.livestockCategory;
         const tags: BatchTags = {

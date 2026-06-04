@@ -15,10 +15,16 @@ async function bootstrap() {
     }),
   );
 
-  const webUrl = process.env.WEB_URL ?? 'http://localhost:3000';
+  const corsOrigins = [
+    process.env.WEB_URL ?? 'http://localhost:3000',
+    ...(process.env.WEB_URLS?.split(',').map((u) => u.trim()) ?? []),
+  ].filter(Boolean);
   app.enableCors({
-    origin: webUrl,
+    origin:
+      corsOrigins.length <= 1 ? corsOrigins[0] : [...new Set(corsOrigins)],
     credentials: true,
+    methods: ['GET', 'HEAD', 'PUT', 'PATCH', 'POST', 'DELETE', 'OPTIONS'],
+    allowedHeaders: ['Authorization', 'Content-Type', 'Accept'],
   });
 
   const port = process.env.PORT ?? 4000;
