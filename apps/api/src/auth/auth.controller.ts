@@ -49,14 +49,23 @@ export class AuthController {
   }
 
   @Post('refresh')
-  async refresh(@Req() req: Request, @Res({ passthrough: true }) res: Response) {
-    const refreshToken = req.cookies?.[REFRESH_COOKIE] as string | undefined;
+  async refresh(
+    @Req() req: Request,
+    @Res({ passthrough: true }) res: Response,
+    @Body() body?: { refreshToken?: string },
+  ) {
+    const refreshToken =
+      (req.cookies?.[REFRESH_COOKIE] as string | undefined) ??
+      body?.refreshToken;
     if (!refreshToken) {
       return { error: 'Sem refresh token' };
     }
     const tokens = await this.authService.refresh(refreshToken);
     this.setRefreshCookie(res, tokens.refreshToken);
-    return { accessToken: tokens.accessToken };
+    return {
+      accessToken: tokens.accessToken,
+      refreshToken: tokens.refreshToken,
+    };
   }
 
   @Post('logout')

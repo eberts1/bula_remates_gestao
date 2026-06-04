@@ -2,6 +2,9 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getAccessToken } from '@/lib/auth';
 import { getApiUrl } from '@/lib/api';
 
+/** Importações grandes (PDF 1000+ linhas) podem levar mais que o padrão de 10s na Vercel. */
+export const maxDuration = 120;
+
 export async function POST(req: NextRequest) {
   const token = await getAccessToken();
   if (!token) {

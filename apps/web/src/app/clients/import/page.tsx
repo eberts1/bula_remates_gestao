@@ -24,6 +24,14 @@ import {
   defaultSelectedForRow,
 } from '@/types/client-import';
 import type { LivestockCategory } from '@docs/shared';
+import { fetchAuthed, refreshSession } from '@/lib/client-auth';
+import {
+  clearImportResume,
+  loadImportResume,
+  saveImportResume,
+  type ImportCommitPayloadRow,
+  type ImportResumeState,
+} from '@/lib/import-resume';
 
 const COMMIT_CHUNK = 40;
 
@@ -78,6 +86,9 @@ export default function ClientImportPage() {
   >();
 
   const commitAbortRef = useRef<AbortController | null>(null);
+  const [pendingResume, setPendingResume] = useState<ImportResumeState | null>(
+    null,
+  );
 
   const busy =
     progress?.phase === 'parsing' || progress?.phase === 'committing';
@@ -87,6 +98,11 @@ export default function ClientImportPage() {
       .then((r) => r.json())
       .then((data) => setIntentions(data.items ?? []))
       .catch(() => {});
+  }, []);
+
+  useEffect(() => {
+    const saved = loadImportResume();
+    if (saved) setPendingResume(saved);
   }, []);
 
   const selectedCount = rows.filter((r) => r.selected).length;
@@ -203,68 +219,79 @@ export default function ClientImportPage() {
     );
   }
 
-  async function handleCommit() {
-    if (!fileMeta) return;
-    const selected = rows.filter((r) => r.selected);
-    if (selected.length === 0) {
+  async function handleCommit(resume?: ImportResumeState) {
+    const payloadRows: ImportCommitPayloadRow[] =
+      resume?.payloadRows ??
+      rows
+        .filter((r) => r.selected)
+        .map((r) => ({
+          rowIndex: r.rowIndex,
+          name: r.name,
+          document: r.document,
+          legacyCode: r.legacyCode,
+          groupKey: r.groupKey,
+          email: r.email,
+          phone: r.phone,
+          notes: r.notes,
+          property: r.property,
+          additionalProperties: r.additionalProperties,
+          animalType: r.animalType,
+          animalSex: r.animalSex,
+          livestockCategory: r.livestockCategory,
+          intentionIds: r.intentionIds,
+          intentionNotes: r.intentionNotes,
+          resolution: r.resolution,
+          conflictClientId: r.conflictClientId,
+          selected: true,
+        }));
+
+    const meta = resume?.fileMeta ?? fileMeta;
+    if (!meta) return;
+    if (payloadRows.length === 0) {
       setError('Selecione ao menos uma linha para importar.');
       return;
     }
 
-    const payloadRows = selected.map((r) => ({
-      rowIndex: r.rowIndex,
-      name: r.name,
-      document: r.document,
-      legacyCode: r.legacyCode,
-      groupKey: r.groupKey,
-      email: r.email,
-      phone: r.phone,
-      notes: r.notes,
-      property: r.property,
-      additionalProperties: r.additionalProperties,
-      animalType: r.animalType,
-      animalSex: r.animalSex,
-      livestockCategory: r.livestockCategory,
-      intentionIds: r.intentionIds,
-      intentionNotes: r.intentionNotes,
-      resolution: r.resolution,
-      conflictClientId: r.conflictClientId,
-      selected: true,
-    }));
-
+    const startChunkIndex = resume?.nextChunkIndex ?? 0;
     const abort = new AbortController();
     commitAbortRef.current = abort;
 
-    setProgress({
-      phase: 'committing',
-      current: 0,
-      total: payloadRows.length,
-      label: 'Salvando clientes…',
-      indeterminate: false,
+    const totals: CommitImportResult = resume?.totals ?? {
       importedCount: 0,
       updatedCount: 0,
       skippedCount: 0,
+    };
+
+    setProgress({
+      phase: 'committing',
+      current: startChunkIndex,
+      total: payloadRows.length,
+      label:
+        startChunkIndex > 0
+          ? 'Retomando importação…'
+          : 'Salvando clientes…',
+      indeterminate: false,
+      importedCount: totals.importedCount,
+      updatedCount: totals.updatedCount,
+      skippedCount: totals.skippedCount,
     });
     setError(null);
+    setPendingResume(null);
 
     try {
-      const totals: CommitImportResult = {
-        importedCount: 0,
-        updatedCount: 0,
-        skippedCount: 0,
-      };
-
-      for (let i = 0; i < payloadRows.length; i += COMMIT_CHUNK) {
+      for (let i = startChunkIndex; i < payloadRows.length; i += COMMIT_CHUNK) {
         if (abort.signal.aborted) break;
 
+        await refreshSession();
+
         const chunk = payloadRows.slice(i, i + COMMIT_CHUNK);
-        const res = await fetch('/api/clients/import/commit', {
+        const res = await fetchAuthed('/api/clients/import/commit', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
-            fileName: fileMeta.fileName,
-            mimeType: fileMeta.mimeType,
-            sourceType: fileMeta.sourceType,
+            fileName: meta.fileName,
+            mimeType: meta.mimeType,
+            sourceType: meta.sourceType,
             rows: chunk,
           }),
           signal: abort.signal,
@@ -282,6 +309,21 @@ export default function ClientImportPage() {
           /* resposta não-JSON */
         }
         if (!res.ok) {
+          const savedSoFar = totals.importedCount + totals.updatedCount;
+          saveImportResume({
+            fileMeta: meta,
+            payloadRows,
+            nextChunkIndex: i,
+            totals,
+            updatedAt: Date.now(),
+          });
+          if (res.status === 401) {
+            throw new Error(
+              savedSoFar > 0
+                ? `Sessão expirada após ${savedSoFar} cliente(s) salvos. Faça login e clique em "Continuar importação" — os já salvos não serão duplicados.`
+                : 'Sessão expirada. Faça login e clique em "Continuar importação".',
+            );
+          }
           throw new Error(
             data.message ??
               `Falha ao salvar (lote ${Math.floor(i / COMMIT_CHUNK) + 1})`,
@@ -292,10 +334,18 @@ export default function ClientImportPage() {
         totals.updatedCount += data.updatedCount ?? 0;
         totals.skippedCount += data.skippedCount ?? 0;
 
-        const processed = Math.min(i + chunk.length, payloadRows.length);
+        const nextChunkIndex = Math.min(i + chunk.length, payloadRows.length);
+        saveImportResume({
+          fileMeta: meta,
+          payloadRows,
+          nextChunkIndex,
+          totals,
+          updatedAt: Date.now(),
+        });
+
         setProgress({
           phase: 'committing',
-          current: processed,
+          current: nextChunkIndex,
           total: payloadRows.length,
           label: 'Salvando clientes…',
           indeterminate: false,
@@ -308,16 +358,17 @@ export default function ClientImportPage() {
       if (abort.signal.aborted) return;
 
       if (payloadRows.length > COMMIT_CHUNK) {
-        await fetch('/api/clients/import/commit', {
+        await refreshSession();
+        await fetchAuthed('/api/clients/import/commit', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
-            fileName: fileMeta.fileName,
-            mimeType: fileMeta.mimeType,
-            sourceType: fileMeta.sourceType,
+            fileName: meta.fileName,
+            mimeType: meta.mimeType,
+            sourceType: meta.sourceType,
             rows: [],
             batchSummary: {
-              rowCount: selected.length,
+              rowCount: payloadRows.length,
               importedCount: totals.importedCount,
               updatedCount: totals.updatedCount,
               skippedCount: totals.skippedCount,
@@ -327,15 +378,26 @@ export default function ClientImportPage() {
         });
       }
 
+      clearImportResume();
+      setPendingResume(null);
       setResult(totals);
-      setRows((prev) => prev.filter((r) => !r.selected));
+      if (!resume) {
+        setRows((prev) => prev.filter((r) => !r.selected));
+      }
     } catch (e) {
       if (e instanceof Error && e.name === 'AbortError') return;
+      const saved = loadImportResume();
+      if (saved) setPendingResume(saved);
       setError(e instanceof Error ? e.message : 'Erro ao importar');
     } finally {
       commitAbortRef.current = null;
       setProgress(null);
     }
+  }
+
+  function discardResume() {
+    clearImportResume();
+    setPendingResume(null);
   }
 
   const reviewRow = reviewIndex !== null ? rows[reviewIndex] : null;
@@ -392,6 +454,34 @@ export default function ClientImportPage() {
 
       {error && (
         <p style={{ color: 'var(--danger)', marginBottom: '1rem' }}>{error}</p>
+      )}
+
+      {pendingResume && !busy && (
+        <div
+          className="import-result-banner"
+          style={{ marginBottom: '1rem', borderColor: 'var(--warning, #b8860b)' }}
+        >
+          <strong>Importação interrompida</strong>
+          <p style={{ marginTop: '0.35rem', fontSize: '0.9rem' }}>
+            {pendingResume.fileMeta.fileName}: {pendingResume.nextChunkIndex} de{' '}
+            {pendingResume.payloadRows.length} linha(s) já processadas (
+            {pendingResume.totals.importedCount} criados,{' '}
+            {pendingResume.totals.updatedCount} atualizados). Faça login se
+            necessário e continue — os já salvos não serão duplicados.
+          </p>
+          <div style={{ display: 'flex', gap: '0.75rem', marginTop: '0.5rem' }}>
+            <button
+              type="button"
+              className="primary"
+              onClick={() => void handleCommit(pendingResume)}
+            >
+              Continuar importação
+            </button>
+            <button type="button" onClick={discardResume}>
+              Descartar e começar de novo
+            </button>
+          </div>
+        </div>
       )}
 
       <ImportProgressBar
