@@ -44,8 +44,21 @@ export default function RegisterPage() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(form),
       });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.message ?? 'Erro ao registrar');
+      let data: { message?: string } = {};
+      try {
+        const text = await res.text();
+        if (text.trim()) data = JSON.parse(text) as { message?: string };
+      } catch {
+        /* resposta não-JSON */
+      }
+      if (!res.ok) {
+        throw new Error(
+          data.message ??
+            (res.status === 500
+              ? 'Erro interno no servidor. Verifique API_URL na Vercel.'
+              : 'Erro ao registrar'),
+        );
+      }
       router.push('/clients');
       router.refresh();
     } catch (err) {

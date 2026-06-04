@@ -1,40 +1,52 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { getApiUrl } from '@/lib/api';
+import { backendErrorMessage, fetchBackend } from '@/lib/api';
 import { setAccessToken } from '@/lib/auth';
 
 export async function POST(req: NextRequest) {
-  const body = await req.json();
-  const res = await fetch(`${getApiUrl()}/auth/login`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(body),
-    credentials: 'include',
-  });
-
-  const data = await res.json();
-  if (!res.ok) {
-    return NextResponse.json(
-      { message: Array.isArray(data.message) ? data.message[0] : data.message ?? 'Erro ao entrar' },
-      { status: res.status },
-    );
-  }
-
-  await setAccessToken(data.accessToken);
-
-  const response = NextResponse.json({
-    user: data.user,
-    tenant: data.tenant,
-  });
-
-  if (data.refreshToken) {
-    response.cookies.set('refresh_token', data.refreshToken, {
-      httpOnly: true,
-      secure: process.env.NODE_ENV === 'production',
-      sameSite: 'lax',
-      path: '/',
-      maxAge: 7 * 24 * 60 * 60,
+  try {
+    const body = await req.json();
+    const { res, data } = await fetchBackend('/auth/login', {
+      method: 'POST',
+      body: JSON.stringify(body),
+      credentials: 'include',
     });
-  }
 
-  return response;
+    if (!res.ok) {
+      return NextResponse.json(
+        { message: backendErrorMessage(data, res, 'Erro ao entrar') },
+        { status: res.status },
+      );
+    }
+
+    const accessToken = data.accessToken;
+    if (typeof accessToken !== 'string' || !accessToken) {
+      return NextResponse.json(
+        { message: 'Resposta inválida da API ao entrar.' },
+        { status: 502 },
+      );
+    }
+
+    await setAccessToken(accessToken);
+
+    const response = NextResponse.json({
+      user: data.user,
+      tenant: data.tenant,
+    });
+
+    if (typeof data.refreshToken === 'string' && data.refreshToken) {
+      response.cookies.set('refresh_token', data.refreshToken, {
+        httpOnly: true,
+        secure: process.env.NODE_ENV === 'production',
+        sameSite: 'lax',
+        path: '/',
+        maxAge: 7 * 24 * 60 * 60,
+      });
+    }
+
+    return response;
+  } catch (e) {
+    const message = e instanceof Error ? e.message : 'Erro ao entrar';
+    const status = message.includes('API_URL') ? 503 : 502;
+    return NextResponse.json({ message }, { status });
+  }
 }

@@ -1,7 +1,86 @@
-const API_URL = process.env.API_URL ?? process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:4000';
+const API_URL = (
+  process.env.API_URL ??
+  process.env.NEXT_PUBLIC_API_URL ??
+  'http://localhost:4000'
+).replace(/\/+$/, '');
 
 export function getApiUrl(): string {
   return API_URL;
+}
+
+function apiUrlMisconfiguredMessage(): string | null {
+  if (!API_URL.includes('localhost') && !API_URL.includes('127.0.0.1')) {
+    if (API_URL.includes('.vercel.app')) {
+      return (
+        'API_URL aponta para o site da Vercel, não para a API. ' +
+        'Defina API_URL e NEXT_PUBLIC_API_URL com a URL pública do Railway (ex.: https://seu-servico.up.railway.app).'
+      );
+    }
+    return null;
+  }
+  if (process.env.VERCEL || process.env.NODE_ENV === 'production') {
+    return (
+      'API_URL não está configurada para produção (ainda em localhost). ' +
+      'Na Vercel, defina API_URL e NEXT_PUBLIC_API_URL com a URL pública da API no Railway.'
+    );
+  }
+  return null;
+}
+
+export async function parseResponseJson(res: Response): Promise<unknown> {
+  const text = await res.text();
+  if (!text.trim()) return {};
+  try {
+    return JSON.parse(text) as unknown;
+  } catch {
+    return {};
+  }
+}
+
+export async function fetchBackend(
+  path: string,
+  init?: RequestInit,
+): Promise<{ res: Response; data: Record<string, unknown> }> {
+  const misconfigured = apiUrlMisconfiguredMessage();
+  if (misconfigured) {
+    throw new Error(misconfigured);
+  }
+
+  const url = `${getApiUrl()}${path.startsWith('/') ? path : `/${path}`}`;
+  let res: Response;
+  try {
+    res = await fetch(url, {
+      ...init,
+      headers: {
+        'Content-Type': 'application/json',
+        ...init?.headers,
+      },
+      cache: 'no-store',
+    });
+  } catch (e) {
+    const detail = e instanceof Error ? e.message : String(e);
+    throw new Error(
+      `Não foi possível conectar à API em ${getApiUrl()}. Verifique se o serviço no Railway está online. (${detail})`,
+    );
+  }
+
+  const data = (await parseResponseJson(res)) as Record<string, unknown>;
+  return { res, data };
+}
+
+function messageFromData(data: Record<string, unknown>, fallback: string): string {
+  const msg = data.message;
+  if (Array.isArray(msg)) return String(msg[0] ?? fallback);
+  if (typeof msg === 'string' && msg) return msg;
+  return fallback;
+}
+
+export function backendErrorMessage(
+  data: Record<string, unknown>,
+  res: Response,
+  fallback: string,
+): string {
+  return messageFromData(data, fallback) || res.statusText || fallback;
 }
 
 export async function apiFetch(
@@ -21,16 +100,9 @@ export async function apiFetch(
     credentials: 'include',
   });
 
-  let data: unknown = {};
-  try {
-    data = await res.json();
-  } catch {
-    /* resposta não-JSON */
-  }
+  const data = (await parseResponseJson(res)) as Record<string, unknown>;
   if (!res.ok) {
-    const msg = (data as { message?: string | string[] }).message;
-    const text = Array.isArray(msg) ? msg[0] : msg;
-    throw new Error(text ?? res.statusText);
+    throw new Error(backendErrorMessage(data, res, res.statusText));
   }
   return data;
 }
