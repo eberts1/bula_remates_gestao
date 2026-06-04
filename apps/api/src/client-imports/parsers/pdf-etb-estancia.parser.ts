@@ -49,12 +49,16 @@ export function normalizeLegacyCode(code: string): string {
   return code.replace(/\D/g, '');
 }
 
+function stripDiacritics(value: string): string {
+  return value.normalize('NFD').replace(/\p{M}/gu, '');
+}
+
 export function detectEtbPdfText(text: string): boolean {
-  const t = text.slice(0, 4000).toUpperCase();
+  const t = stripDiacritics(text.slice(0, 4000).toUpperCase());
   return (
     t.includes('ESTANCIA BAHIA') &&
     t.includes('LISTAGEM DE CLIENTES') &&
-    (t.includes('CÓDIGO') || t.includes('CODIGO'))
+    t.includes('CODIGO')
   );
 }
 
@@ -527,8 +531,10 @@ function parseBlock(block: EtbBlock, rowIndex: number): ParsedImportRow | null {
 export async function parsePdfEtbEstancia(
   buffer: Buffer,
   _fileName: string,
+  extractedText?: string,
 ): Promise<ParseFileResult> {
-  const { text } = await pdfParse(buffer);
+  const text =
+    extractedText ?? (await pdfParse(buffer)).text;
   const lines = cleanLines(text);
   const blocks = groupBlocks(lines);
 

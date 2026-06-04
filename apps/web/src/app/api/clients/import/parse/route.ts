@@ -1,9 +1,9 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getAccessToken } from '@/lib/auth';
-import { getApiUrl } from '@/lib/api';
+import { getApiUrl, parseResponseJson } from '@/lib/api';
 
-/** Importações grandes (PDF 1000+ linhas) podem levar mais que o padrão de 10s na Vercel. */
-export const maxDuration = 120;
+/** PDFs ETB com centenas de páginas podem levar 1–2 min só na extração de texto. */
+export const maxDuration = 300;
 
 export async function POST(req: NextRequest) {
   const token = await getAccessToken();
@@ -36,19 +36,25 @@ export async function POST(req: NextRequest) {
       body: formData,
     });
 
-    const data = await res.json();
+    const data = await parseResponseJson(res);
     if (!res.ok) {
       const msg = (data as { message?: string | string[] }).message;
+      const fallback =
+        res.status === 504 || res.status === 502
+          ? 'O processamento do PDF demorou demais. Tente um arquivo menor (ex.: só as páginas necessárias) ou tente novamente em instantes.'
+          : 'Erro ao processar o arquivo';
       return NextResponse.json(
-        { message: Array.isArray(msg) ? msg[0] : msg ?? 'Erro' },
+        { message: Array.isArray(msg) ? msg[0] : msg ?? fallback },
         { status: res.status },
       );
     }
     return NextResponse.json(data);
   } catch (e) {
-    return NextResponse.json(
-      { message: e instanceof Error ? e.message : 'Erro' },
-      { status: 500 },
-    );
+    const message = e instanceof Error ? e.message : 'Erro';
+    const friendly =
+      /upstream|timed out|timeout|aborted/i.test(message)
+        ? 'O processamento do PDF demorou demais. Tente um arquivo menor ou aguarde e tente novamente.'
+        : message;
+    return NextResponse.json({ message: friendly }, { status: 500 });
   }
 }

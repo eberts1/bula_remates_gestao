@@ -169,8 +169,10 @@ function parseLine(line: string, rowIndex: number): ParsedImportRow | null {
 export async function parsePdfTouroMt(
   buffer: Buffer,
   fileName: string,
+  extractedText?: string,
 ): Promise<ParseFileResult> {
-  const { text } = await pdfParse(buffer);
+  const text =
+    extractedText ?? (await pdfParse(buffer)).text;
   const lines = splitGluedLines(text);
   const rows: ParsedImportRow[] = [];
 

@@ -19,9 +19,9 @@ export async function parseImportFile(
   if (mimeType === 'application/pdf' || lower.endsWith('.pdf')) {
     const { text } = await pdfParse(buffer);
     if (detectEtbPdfText(text)) {
-      return parsePdfEtbEstancia(buffer, fileName);
+      return parsePdfEtbEstancia(buffer, fileName, text);
     }
-    return parsePdfTouroMt(buffer, fileName);
+    return parsePdfTouroMt(buffer, fileName, text);
   }
 
   if (

@@ -42,6 +42,8 @@ gcloud run deploy bula-remates-api `
   --dockerfile apps/api/Dockerfile `
   --region southamerica-east1 `
   --platform managed `
+  --timeout 300 `
+  --memory 1Gi `
   --allow-unauthenticated `
   --service-account bula-remates-api@project-d6404b45-77db-438e-9d5.iam.gserviceaccount.com `
   --set-env-vars "NODE_ENV=production,STORAGE_MODE=gcs,GCS_BUCKET=bula_remates_gestao,GCS_PROJECT_ID=project-d6404b45-77db-438e-9d5,DATABASE_URL=COLOQUE_NEON,REDIS_URL=COLOQUE_REDIS,JWT_ACCESS_SECRET=COLOQUE_1,JWT_REFRESH_SECRET=COLOQUE_2,JWT_ACCESS_EXPIRES=15m,JWT_REFRESH_TTL_SECONDS=604800,WEB_URL=COLOQUE_VERCEL,API_URL=COLOQUE_URL_CLOUD_RUN_DEPOIS"

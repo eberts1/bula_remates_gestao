@@ -1,4 +1,9 @@
 {
   "installCommand": "cd ../.. && pnpm install",
-  "buildCommand": "pnpm build"
+  "buildCommand": "pnpm build",
+  "functions": {
+    "src/app/api/clients/import/parse/route.ts": {
+      "maxDuration": 300
+    }
+  }
 }
