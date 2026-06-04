@@ -13,6 +13,7 @@ COPY packages/shared ./packages/shared/
 COPY apps/api ./apps/api/
 
 RUN pnpm install --frozen-lockfile
+RUN pnpm --filter @docs/shared build
 RUN pnpm --filter @docs/api exec prisma generate
 RUN pnpm --filter @docs/api build
 

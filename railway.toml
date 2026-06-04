@@ -3,7 +3,7 @@
 
 [build]
 builder = "nixpacks"
-buildCommand = "pnpm install && pnpm --filter @docs/api exec prisma generate && pnpm --filter @docs/api build"
+buildCommand = "pnpm install && pnpm --filter @docs/shared build && pnpm --filter @docs/api exec prisma generate && pnpm --filter @docs/api build"
 
 [deploy]
 startCommand = "pnpm --filter @docs/api exec prisma migrate deploy && pnpm --filter @docs/api start"
