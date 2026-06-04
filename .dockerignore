@@ -1,0 +1,11 @@
+node_modules
+.git
+.turbo
+apps/web/.next
+apps/api/uploads
+**/.env
+**/.env.*
+*.log
+coverage
+.idea
+.vscode

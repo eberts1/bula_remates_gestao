@@ -1,5 +1,7 @@
 # Guia de deploy MVP
 
+> **Checklist passo a passo (marcar item a item):** [DEPLOY_CHECKLIST.md](./DEPLOY_CHECKLIST.md)
+
 ## Arquitetura em produção
 
 ```

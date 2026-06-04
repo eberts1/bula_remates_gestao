@@ -11,9 +11,14 @@ export class GcsStorageService extends StorageService {
   constructor(config: ConfigService) {
     super();
     this.bucket = config.getOrThrow<string>('GCS_BUCKET');
-    this.storage = new Storage({
-      projectId: config.get<string>('GCS_PROJECT_ID'),
-    });
+    const projectId = config.get<string>('GCS_PROJECT_ID');
+    const credentialsJson = config.get<string>('GCP_SERVICE_ACCOUNT_JSON');
+    if (credentialsJson) {
+      const credentials = JSON.parse(credentialsJson) as Record<string, unknown>;
+      this.storage = new Storage({ projectId, credentials });
+    } else {
+      this.storage = new Storage({ projectId });
+    }
   }
 
   getBucketName(): string {

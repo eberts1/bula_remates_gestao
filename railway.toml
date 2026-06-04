@@ -1,0 +1,10 @@
+# Configuração sugerida para o serviço @docs/api no Railway (monorepo pnpm).
+# No painel do serviço: Settings → confirme Root Directory = raiz do repo (vazio ou ".").
+
+[build]
+builder = "nixpacks"
+buildCommand = "pnpm install && pnpm --filter @docs/api exec prisma generate && pnpm --filter @docs/api build"
+
+[deploy]
+startCommand = "pnpm --filter @docs/api exec prisma migrate deploy && pnpm --filter @docs/api start"
+restartPolicyType = "on_failure"

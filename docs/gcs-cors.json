@@ -1,0 +1,8 @@
+[
+  {
+    "origin": ["http://localhost:3000", "https://SEU-APP.vercel.app"],
+    "method": ["GET", "PUT", "HEAD"],
+    "responseHeader": ["Content-Type", "Content-Length"],
+    "maxAgeSeconds": 3600
+  }
+]
