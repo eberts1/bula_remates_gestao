@@ -1,8 +1,17 @@
-const API_URL = (
+function normalizeApiUrl(raw: string): string {
+  let url = raw.trim().replace(/\/+$/, '');
+  if (!url) return 'http://localhost:4000';
+  if (!/^https?:\/\//i.test(url)) {
+    url = `https://${url}`;
+  }
+  return url;
+}
+
+const API_URL = normalizeApiUrl(
   process.env.API_URL ??
-  process.env.NEXT_PUBLIC_API_URL ??
-  'http://localhost:4000'
-).replace(/\/+$/, '');
+    process.env.NEXT_PUBLIC_API_URL ??
+    'http://localhost:4000',
+);
 
 export function getApiUrl(): string {
   return API_URL;
