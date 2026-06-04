@@ -1,6 +1,7 @@
 'use client';
 
 import type { ImportRow } from '@/types/client-import';
+import { formatPropertyLabel } from '@/types/client-import';
 
 const CATEGORY_LABELS: Record<string, string> = {
   bezerra: 'Bezerra',
@@ -17,6 +18,7 @@ const CATEGORY_LABELS: Record<string, string> = {
 
 interface Props {
   rows: ImportRow[];
+  sourceType?: string;
   onToggleAll: (checked: boolean) => void;
   onToggleRow: (index: number, checked: boolean) => void;
   onReview: (index: number) => void;
@@ -24,11 +26,14 @@ interface Props {
 
 export function ImportPreviewTable({
   rows,
+  sourceType,
   onToggleAll,
   onToggleRow,
   onReview,
 }: Props) {
   const allSelected = rows.length > 0 && rows.every((r) => r.selected);
+  const showEtb =
+    sourceType === 'etb_estancia_bahia' || rows.some((r) => r.legacyCode);
 
   return (
     <div className="import-table-wrap card">
@@ -44,10 +49,21 @@ export function ImportPreviewTable({
                 />
               </th>
               <th>Status</th>
+              {showEtb && <th>Cód.</th>}
               <th>Nome</th>
-              <th>Fazenda</th>
-              <th>Cidade</th>
-              <th>UF</th>
+              {showEtb && <th>E-mail</th>}
+              {showEtb ? (
+                <>
+                  <th>Propriedades</th>
+                  <th>UF</th>
+                </>
+              ) : (
+                <>
+                  <th>Fazenda</th>
+                  <th>Cidade</th>
+                  <th>UF</th>
+                </>
+              )}
               <th>Etiquetas</th>
               <th />
             </tr>
@@ -73,10 +89,43 @@ export function ImportPreviewTable({
                   )}
                   {!row.conflict && !row.needsReview && 'OK'}
                 </td>
+                {showEtb && <td>{row.legacyCode ?? '—'}</td>}
                 <td>{row.name}</td>
-                <td>{row.property.farmName || '—'}</td>
-                <td>{row.property.city || '—'}</td>
-                <td>{row.property.state}</td>
+                {showEtb && (
+                  <td style={{ maxWidth: 160, overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                    {row.email ?? '—'}
+                  </td>
+                )}
+                {showEtb && (
+                  <td style={{ maxWidth: 220, fontSize: '0.78rem' }}>
+                    {(row.additionalProperties?.length ?? 0) > 0 && (
+                      <span
+                        className="badge-tag"
+                        style={{ marginBottom: '0.35rem', display: 'inline-block' }}
+                      >
+                        {(row.additionalProperties?.length ?? 0) + 1} fazendas
+                      </span>
+                    )}
+                    <div>{formatPropertyLabel(row.property)}</div>
+                    {(row.additionalProperties?.length ?? 0) > 0 &&
+                      row.additionalProperties!.map((p, j) => (
+                        <div
+                          key={j}
+                          style={{ color: 'var(--muted)', marginTop: '0.2rem' }}
+                        >
+                          {formatPropertyLabel(p)}
+                        </div>
+                      ))}
+                  </td>
+                )}
+                {!showEtb && (
+                  <>
+                    <td>{row.property.farmName || '—'}</td>
+                    <td>{row.property.city || '—'}</td>
+                    <td>{row.property.state}</td>
+                  </>
+                )}
+                {showEtb && <td>{row.property.state}</td>}
                 <td>
                   {row.livestockCategory && (
                     <span className="badge-tag">

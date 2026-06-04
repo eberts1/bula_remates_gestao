@@ -27,7 +27,9 @@ const CATEGORY_LABELS: Record<string, string> = {
 };
 
 const MATCH_LABELS: Record<string, string> = {
+  legacy_code: 'Código legado igual',
   document: 'Documento igual',
+  email: 'E-mail igual',
   phone: 'Telefone igual',
   name_city: 'Nome e cidade iguais',
 };
@@ -150,6 +152,15 @@ export function ImportReviewDrawer({
               <input
                 value={current.name}
                 onChange={(e) => patch({ name: e.target.value })}
+              />
+            </label>
+            <label>
+              Cód. legado
+              <input
+                value={current.legacyCode ?? ''}
+                onChange={(e) =>
+                  patch({ legacyCode: e.target.value || null })
+                }
               />
             </label>
             <label>

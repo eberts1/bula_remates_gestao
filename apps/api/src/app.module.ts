@@ -17,6 +17,8 @@ import { PublicClientFormsModule } from './public-client-forms/public-client-for
 import { PublicRegistrationModule } from './public-registration/public-registration.module';
 import { ClientImportsModule } from './client-imports/client-imports.module';
 import { TenantIntentionsModule } from './tenant-intentions/tenant-intentions.module';
+import { GeoModule } from './geo/geo.module';
+import { ClientHygieneModule } from './client-hygiene/client-hygiene.module';
 import { RedisThrottlerStorage } from './common/redis-throttler.storage';
 
 @Module({
@@ -44,6 +46,8 @@ import { RedisThrottlerStorage } from './common/redis-throttler.storage';
     PublicRegistrationModule,
     ClientImportsModule,
     TenantIntentionsModule,
+    GeoModule,
+    ClientHygieneModule,
     HealthModule,
   ],
   providers: [{ provide: APP_GUARD, useClass: ThrottlerGuard }],

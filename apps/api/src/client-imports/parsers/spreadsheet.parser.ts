@@ -1,7 +1,7 @@
 import * as XLSX from 'xlsx';
 import type { LivestockCategory } from '@docs/shared';
 import { normalizePhone } from './phone.util';
-import type { ParsedImportRow } from './pdf-touro-mt.parser';
+import type { ParsedImportRow } from './import-parser.types';
 
 const COLUMN_ALIASES: Record<string, string[]> = {
   name: ['nome', 'name', 'cliente', 'produtor', 'razao social'],
@@ -97,6 +97,8 @@ export function parseSpreadsheet(
       email: cell(row, mapping.email) || null,
       phone: normalizePhone(cell(row, mapping.phone)),
       notes: cell(row, mapping.notes) || null,
+      legacyCode: null,
+      groupKey: null,
       property: {
         farmName: cell(row, mapping.farmName) || '—',
         city: cell(row, mapping.city) || '—',

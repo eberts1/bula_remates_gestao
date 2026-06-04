@@ -161,10 +161,13 @@ export const importRowDataSchema = z.object({
   rowIndex: z.number().int().nonnegative(),
   name: z.string().min(1).max(200),
   document: z.string().max(20).optional().nullable(),
+  legacyCode: z.string().max(20).optional().nullable(),
+  groupKey: z.string().max(32).optional().nullable(),
   email: z.string().email().optional().nullable().or(z.literal('')),
   phone: z.string().max(30).optional().nullable(),
   notes: z.string().max(2000).optional().nullable(),
   property: clientPropertySchema,
+  additionalProperties: z.array(clientPropertySchema).max(50).optional(),
   animalType: animalTypeSchema,
   animalSex: animalSexSchema,
   livestockCategory: livestockCategorySchema,
@@ -176,7 +179,13 @@ export const importRowDataSchema = z.object({
 
 export const importConflictSchema = z.object({
   clientId: z.string().uuid(),
-  matchReason: z.enum(['document', 'phone', 'name_city']),
+  matchReason: z.enum([
+    'legacy_code',
+    'document',
+    'email',
+    'phone',
+    'name_city',
+  ]),
   existing: z.object({
     id: z.string().uuid(),
     name: z.string(),

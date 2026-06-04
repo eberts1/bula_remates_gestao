@@ -3,7 +3,10 @@ const pdfParse = require('pdf-parse') as (
   buffer: Buffer,
 ) => Promise<{ text: string }>;
 import type { LivestockCategory } from '@docs/shared';
+import type { ParseFileResult, ParsedImportRow, PdfParseMeta } from './import-parser.types';
 import { extractPhonesFromTail, normalizePhone } from './phone.util';
+
+export type { ParsedImportRow } from './import-parser.types';
 
 const BRAZILIAN_STATES = new Set([
   'AC', 'AL', 'AP', 'AM', 'BA', 'CE', 'DF', 'ES', 'GO', 'MA', 'MT', 'MS', 'MG',
@@ -11,30 +14,6 @@ const BRAZILIAN_STATES = new Set([
 ]);
 
 const FARM_KEYWORD = /\b(FAZENDA|SITIO|SÍTIO|SITIO|AGROPECUARIA|AGROPECUÁRIA)\b/i;
-
-export interface ParsedImportRow {
-  rowIndex: number;
-  name: string;
-  document: string | null;
-  email: string | null;
-  phone: string | null;
-  notes: string | null;
-  property: {
-    farmName: string;
-    city: string;
-    state: string;
-    phone?: string;
-  };
-  warnings: string[];
-  needsReview: boolean;
-}
-
-export interface PdfParseMeta {
-  parserId: string;
-  suggestedTags: {
-    livestockCategory?: LivestockCategory;
-  };
-}
 
 const UF_BEFORE_PHONE = Array.from(BRAZILIAN_STATES).join('|');
 
@@ -132,6 +111,8 @@ function parseLine(line: string, rowIndex: number): ParsedImportRow | null {
       phone: null,
       notes: null,
       property: { farmName: '', city: '', state: 'MT' },
+      legacyCode: null,
+      groupKey: null,
       warnings,
       needsReview: true,
     };
@@ -151,6 +132,8 @@ function parseLine(line: string, rowIndex: number): ParsedImportRow | null {
       phone: normalizePhone(phones[0] ?? null),
       notes: null,
       property: { farmName: '', city: '', state },
+      legacyCode: null,
+      groupKey: null,
       warnings,
       needsReview: true,
     };
@@ -170,6 +153,8 @@ function parseLine(line: string, rowIndex: number): ParsedImportRow | null {
     email: null,
     phone: normalizePhone(phones[0] ?? null),
     notes: null,
+    legacyCode: null,
+    groupKey: null,
     property: {
       farmName,
       city,
@@ -184,7 +169,7 @@ function parseLine(line: string, rowIndex: number): ParsedImportRow | null {
 export async function parsePdfTouroMt(
   buffer: Buffer,
   fileName: string,
-): Promise<{ rows: ParsedImportRow[]; meta: PdfParseMeta }> {
+): Promise<ParseFileResult> {
   const { text } = await pdfParse(buffer);
   const lines = splitGluedLines(text);
   const rows: ParsedImportRow[] = [];
@@ -201,6 +186,7 @@ export async function parsePdfTouroMt(
     rows,
     meta: {
       parserId: 'touro_mt_list',
+      sourceLabel: 'Lista leilão (Touro MT)',
       suggestedTags: inferTagsFromFileName(fileName),
     },
   };

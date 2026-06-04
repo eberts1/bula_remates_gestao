@@ -38,7 +38,7 @@ export function ClientToolbar({
           <span className="sr-only">Buscar cliente</span>
           <input
             type="search"
-            placeholder="Nome, documento ou e-mail..."
+            placeholder="Nome, telefone, CPF/CNPJ, DDD, cidade/UF da fazenda..."
             value={search}
             onChange={(e) => onSearchChange(e.target.value)}
             aria-label="Buscar cliente"
@@ -64,6 +64,10 @@ export function ClientToolbar({
 
           <Link href="/clients/import" className="ghost clients-import-link">
             Importar
+          </Link>
+
+          <Link href="/clients/hygiene" className="ghost clients-import-link">
+            Higienizar
           </Link>
         </div>
       </div>

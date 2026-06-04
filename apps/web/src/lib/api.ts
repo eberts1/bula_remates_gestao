@@ -77,10 +77,31 @@ export async function fetchBackend(
   return { res, data };
 }
 
+function messageFromZodFlatten(msg: Record<string, unknown>): string | null {
+  const formErrors = msg.formErrors;
+  if (Array.isArray(formErrors) && formErrors.length > 0) {
+    return String(formErrors[0]);
+  }
+  const fieldErrors = msg.fieldErrors;
+  if (fieldErrors && typeof fieldErrors === 'object') {
+    for (const [key, values] of Object.entries(
+      fieldErrors as Record<string, unknown>,
+    )) {
+      if (Array.isArray(values) && values.length > 0) {
+        return `${key}: ${String(values[0])}`;
+      }
+    }
+  }
+  return null;
+}
+
 function messageFromData(data: Record<string, unknown>, fallback: string): string {
   const msg = data.message;
   if (Array.isArray(msg)) return String(msg[0] ?? fallback);
   if (typeof msg === 'string' && msg) return msg;
+  if (msg && typeof msg === 'object' && !Array.isArray(msg)) {
+    return messageFromZodFlatten(msg as Record<string, unknown>) ?? fallback;
+  }
   return fallback;
 }
 

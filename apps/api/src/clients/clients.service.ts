@@ -6,6 +6,10 @@ import {
 import { DocumentStatus, Prisma } from '@prisma/client';
 import { JwtPayload } from '../auth/auth.types';
 import { PrismaService } from '../prisma/prisma.service';
+import {
+  buildClientTextSearchConditions,
+  buildDigitSearchSql,
+} from './client-search.util';
 import { CreateClientDto } from './dto/create-client.dto';
 import { ClientPropertyDto } from './dto/client-property.dto';
 import { UpdateClientDto } from './dto/update-client.dto';
@@ -44,6 +48,9 @@ export class ClientsService {
     },
   ) {
     const skip = (page - 1) * limit;
+    const searchWhere = q
+      ? await this.buildSearchWhere(user.tenantId, q)
+      : {};
     const where: Prisma.ClientWhereInput = {
       tenantId: user.tenantId,
       deletedAt: null,
@@ -59,15 +66,7 @@ export class ClientsService {
             },
           }
         : {}),
-      ...(q
-        ? {
-            OR: [
-              { name: { contains: q, mode: 'insensitive' } },
-              { document: { contains: q, mode: 'insensitive' } },
-              { email: { contains: q, mode: 'insensitive' } },
-            ],
-          }
-        : {}),
+      ...searchWhere,
     };
 
     const [items, total] = await Promise.all([
@@ -88,6 +87,24 @@ export class ClientsService {
       limit,
       totalPages: Math.ceil(total / limit),
     };
+  }
+
+  private async buildSearchWhere(
+    tenantId: string,
+    q: string,
+  ): Promise<Prisma.ClientWhereInput> {
+    const conditions = buildClientTextSearchConditions(q);
+
+    const digitSql = buildDigitSearchSql(tenantId, q);
+    if (digitSql) {
+      const rows = await this.prisma.$queryRaw<{ id: string }[]>(digitSql.sql);
+      const ids = rows.map((r) => r.id);
+      if (ids.length > 0) {
+        conditions.push({ id: { in: ids } });
+      }
+    }
+
+    return conditions.length > 0 ? { OR: conditions } : {};
   }
 
   async findOne(user: JwtPayload, id: string) {

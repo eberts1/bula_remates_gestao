@@ -80,6 +80,8 @@ export function AppShell({ children, title }: Props) {
 
     { href: '/clients/import', label: 'Importar' },
 
+    { href: '/clients/hygiene', label: 'Higienizar' },
+
     { href: '/collaborators', label: 'Colaboradores' },
 
   ];

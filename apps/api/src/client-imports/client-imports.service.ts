@@ -9,23 +9,54 @@ import { Prisma } from '@prisma/client';
 import { JwtPayload } from '../auth/auth.types';
 import { ClientsService } from '../clients/clients.service';
 import { PrismaService } from '../prisma/prisma.service';
-import { parsePdfTouroMt } from './parsers/pdf-touro-mt.parser';
-import { parseSpreadsheet, type ColumnMapping } from './parsers/spreadsheet.parser';
+import { normalizeLegacyCode } from './parsers/pdf-etb-estancia.parser';
+import { parseImportFile, type ColumnMapping } from './parsers/parser.registry';
 import { normalizePhone } from './parsers/phone.util';
 
 /** Evita timeout do Prisma/Neon em importações grandes (ex.: PDF 200+ linhas). */
 const IMPORT_COMMIT_CHUNK_SIZE = 25;
 
+function formatImportCommitValidationError(error: {
+  issues: Array<{ path: (string | number)[]; message: string }>;
+}): string {
+  const issue = error.issues[0];
+  if (!issue) return 'Dados de importação inválidos';
+  const rowIdx = issue.path[0] === 'rows' ? issue.path[1] : undefined;
+  const field =
+    issue.path[0] === 'rows'
+      ? issue.path.slice(2).join('.')
+      : issue.path.join('.');
+  const parts: string[] = ['Dados de importação inválidos'];
+  if (typeof rowIdx === 'number') parts.push(`(item ${rowIdx + 1} do lote)`);
+  if (field) parts.push(`campo ${field}`);
+  return `${parts.join(' ')}: ${issue.message}`;
+}
+
 export interface ImportConflict {
   clientId: string;
-  matchReason: 'document' | 'phone' | 'name_city';
+  matchReason:
+    | 'legacy_code'
+    | 'document'
+    | 'email'
+    | 'phone'
+    | 'name_city';
   existing: {
     id: string;
     name: string;
     document: string | null;
     phone: string | null;
+    email: string | null;
     city: string | null;
+    legacyCode: string | null;
   };
+}
+
+interface ConflictCache {
+  byLegacyCode: Map<string, ImportConflict>;
+  byEmail: Map<string, ImportConflict>;
+  byDocument: Map<string, ImportConflict>;
+  byPhone: Map<string, ImportConflict>;
+  byNameCity: Map<string, ImportConflict>;
 }
 
 @Injectable()
@@ -52,56 +83,54 @@ export class ClientImportsService {
 
     const mime = file.mimetype;
     const name = file.originalname;
-    let parsed: Awaited<ReturnType<typeof parsePdfTouroMt>>;
 
-    if (mime === 'application/pdf' || name.toLowerCase().endsWith('.pdf')) {
-      parsed = await parsePdfTouroMt(file.buffer, name);
-    } else if (
-      mime.includes('spreadsheet') ||
-      mime.includes('excel') ||
-      /\.xlsx?$/i.test(name)
-    ) {
-      parsed = parseSpreadsheet(file.buffer, name, columnMapping);
-    } else {
+    let parsed: Awaited<ReturnType<typeof parseImportFile>>;
+    try {
+      parsed = await parseImportFile(
+        file.buffer,
+        name,
+        mime,
+        columnMapping,
+      );
+    } catch (e) {
       throw new BadRequestException(
-        'Formato não suportado. Use PDF, XLS ou XLSX.',
+        e instanceof Error ? e.message : 'Formato não suportado. Use PDF, XLS ou XLSX.',
       );
     }
 
-    const rowsWithConflicts = await Promise.all(
-      parsed.rows.map(async (row) => {
-        const conflict = await this.findConflict(user.tenantId, {
-          name: row.name,
-          document: row.document,
-          phone: row.phone,
-          city: row.property.city,
-        });
-        return {
-          ...row,
-          animalType: sourceHints.animalType ?? null,
-          animalSex: sourceHints.animalSex ?? null,
-          livestockCategory:
-            sourceHints.livestockCategory ??
-            parsed.meta.suggestedTags.livestockCategory ??
-            null,
-          intentionIds: sourceHints.intentionIds ?? [],
-          intentionNotes: sourceHints.intentionNotes ?? null,
-          conflict,
-        };
-      }),
-    );
+    const cache = await this.buildConflictCache(user.tenantId);
 
-    const sheetMeta =
-      parsed.meta.parserId === 'spreadsheet'
-        ? (parsed as ReturnType<typeof parseSpreadsheet>).meta
-        : null;
+    const rowsWithConflicts = parsed.rows.map((row) => {
+      const conflict = this.findConflictCached(cache, {
+        name: row.name,
+        document: row.document,
+        phone: row.phone,
+        email: row.email,
+        city: row.property.city,
+        legacyCode: row.legacyCode,
+        groupKey: row.groupKey,
+      });
+      return {
+        ...row,
+        animalType: sourceHints.animalType ?? null,
+        animalSex: sourceHints.animalSex ?? null,
+        livestockCategory:
+          sourceHints.livestockCategory ??
+          parsed.meta.suggestedTags.livestockCategory ??
+          null,
+        intentionIds: sourceHints.intentionIds ?? [],
+        intentionNotes: sourceHints.intentionNotes ?? null,
+        conflict,
+      };
+    });
 
     return {
       fileName: name,
       mimeType: mime,
       sourceType: parsed.meta.parserId,
+      sourceLabel: parsed.meta.sourceLabel,
       suggestedTags: parsed.meta.suggestedTags,
-      columnMapping: sheetMeta?.columnMapping,
+      columnMapping: parsed.meta.columnMapping,
       rows: rowsWithConflicts,
       total: rowsWithConflicts.length,
     };
@@ -110,7 +139,9 @@ export class ClientImportsService {
   async commit(user: JwtPayload, body: unknown) {
     const parsed = importCommitSchema.safeParse(body);
     if (!parsed.success) {
-      throw new BadRequestException(parsed.error.flatten());
+      throw new BadRequestException(
+        formatImportCommitValidationError(parsed.error),
+      );
     }
 
     const { fileName, mimeType, sourceType, rows, batchSummary } = parsed.data;
@@ -142,6 +173,7 @@ export class ClientImportsService {
     let skippedCount = 0;
 
     const validIntentionIds = await this.getTenantIntentionIdSet(user.tenantId);
+    const groupClientIds = new Map<string, string>();
 
     try {
       for (let i = 0; i < toProcess.length; i += IMPORT_COMMIT_CHUNK_SIZE) {
@@ -157,6 +189,7 @@ export class ClientImportsService {
                 user,
                 row,
                 validIntentionIds,
+                groupClientIds,
               );
               imp += result.imported;
               upd += result.updated;
@@ -215,11 +248,19 @@ export class ClientImportsService {
     user: JwtPayload,
     row: ImportCommitRow,
     validIntentionIds: Set<string>,
+    groupClientIds: Map<string, string>,
   ): Promise<{ imported: number; updated: number; skipped: number }> {
     const resolution = row.resolution ?? 'create';
+    const groupKey = row.groupKey?.trim();
 
     if (resolution === 'skip') {
       return { imported: 0, updated: 0, skipped: 1 };
+    }
+
+    if (groupKey && groupClientIds.has(groupKey)) {
+      const clientId = groupClientIds.get(groupKey)!;
+      await this.appendImportProperties(tx, user.tenantId, clientId, row);
+      return { imported: 0, updated: 0, skipped: 0 };
     }
 
     const intentionIds = (row.intentionIds ?? []).filter((id) =>
@@ -233,17 +274,28 @@ export class ClientImportsService {
       intentionNotes: row.intentionNotes ?? null,
     };
 
+    const legacyNorm = row.legacyCode
+      ? normalizeLegacyCode(row.legacyCode)
+      : null;
+
     if (resolution === 'update') {
-      const targetId =
-        row.conflictClientId ??
-        (
+      let targetId = row.conflictClientId;
+      if (!targetId && groupKey) {
+        targetId = groupClientIds.get(groupKey);
+      }
+      if (!targetId) {
+        targetId = (
           await this.findConflict(user.tenantId, {
             name: row.name,
             document: row.document ?? null,
             phone: row.phone ?? null,
+            email: row.email ?? null,
             city: row.property.city,
+            legacyCode: row.legacyCode ?? null,
+            groupKey: row.groupKey ?? null,
           })
         )?.clientId;
+      }
       if (!targetId) {
         return { imported: 0, updated: 0, skipped: 1 };
       }
@@ -251,18 +303,26 @@ export class ClientImportsService {
         where: { id: targetId },
         data: {
           ...(row.phone ? { phone: row.phone } : {}),
+          ...(row.email ? { email: row.email } : {}),
           ...(row.notes ? { notes: row.notes } : {}),
+          ...(legacyNorm
+            ? { legacyCode: legacyNorm }
+            : row.legacyCode
+              ? { legacyCode: row.legacyCode }
+              : {}),
           ...tagData,
         },
       });
-      await this.clientsService.appendPropertyIfNotExists(
-        tx,
-        user.tenantId,
-        targetId,
-        row.property,
-      );
+      await this.appendImportProperties(tx, user.tenantId, targetId, row);
       await this.clientsService.syncClientIntentions(tx, targetId, intentionIds);
+      if (groupKey) groupClientIds.set(groupKey, targetId);
       return { imported: 0, updated: 1, skipped: 0 };
+    }
+
+    if (resolution === 'create' && groupKey && groupClientIds.has(groupKey)) {
+      const clientId = groupClientIds.get(groupKey)!;
+      await this.appendImportProperties(tx, user.tenantId, clientId, row);
+      return { imported: 0, updated: 0, skipped: 0 };
     }
 
     const created = await tx.client.create({
@@ -270,25 +330,171 @@ export class ClientImportsService {
         tenantId: user.tenantId,
         name: row.name,
         document: row.document?.trim() || null,
+        legacyCode: legacyNorm || row.legacyCode?.trim() || null,
         email: row.email || null,
         phone: row.phone ?? null,
         notes: row.notes ?? null,
         ...tagData,
       },
     });
-    await tx.clientProperty.create({
-      data: {
-        clientId: created.id,
-        tenantId: user.tenantId,
-        farmName: row.property.farmName,
-        city: row.property.city,
-        state: row.property.state.toUpperCase(),
-        phone: row.property.phone ?? null,
-        sortOrder: 0,
+    await this.appendImportProperties(tx, user.tenantId, created.id, row, true);
+    await this.clientsService.syncClientIntentions(tx, created.id, intentionIds);
+    if (groupKey) groupClientIds.set(groupKey, created.id);
+    return { imported: 1, updated: 0, skipped: 0 };
+  }
+
+  private async appendImportProperties(
+    tx: Prisma.TransactionClient,
+    tenantId: string,
+    clientId: string,
+    row: ImportCommitRow,
+    primaryAlreadyCreated = false,
+  ): Promise<void> {
+    if (!primaryAlreadyCreated) {
+      await this.clientsService.appendPropertyIfNotExists(
+        tx,
+        tenantId,
+        clientId,
+        row.property,
+      );
+    } else {
+      await tx.clientProperty.create({
+        data: {
+          clientId,
+          tenantId,
+          farmName: row.property.farmName || '—',
+          city: row.property.city || '—',
+          state: row.property.state.toUpperCase(),
+          phone: row.property.phone ?? null,
+          routeNotes: row.property.routeNotes ?? null,
+          sortOrder: 0,
+        },
+      });
+    }
+
+    const extras = row.additionalProperties ?? [];
+    for (let i = 0; i < extras.length; i++) {
+      await this.clientsService.appendPropertyIfNotExists(
+        tx,
+        tenantId,
+        clientId,
+        {
+          ...extras[i],
+          routeNotes:
+            extras[i].routeNotes ??
+            `${extras[i].farmName} - ${extras[i].city} ${extras[i].state}`,
+        },
+      );
+    }
+  }
+
+  private normalizeEmail(email: string | null | undefined): string | null {
+    if (!email?.trim()) return null;
+    return email.trim().toLowerCase();
+  }
+
+  async buildConflictCache(tenantId: string): Promise<ConflictCache> {
+    const clients = await this.prisma.client.findMany({
+      where: { tenantId, deletedAt: null },
+      select: {
+        id: true,
+        name: true,
+        document: true,
+        phone: true,
+        email: true,
+        legacyCode: true,
+        properties: { take: 1, orderBy: { sortOrder: 'asc' } },
       },
     });
-    await this.clientsService.syncClientIntentions(tx, created.id, intentionIds);
-    return { imported: 1, updated: 0, skipped: 0 };
+
+    const cache: ConflictCache = {
+      byLegacyCode: new Map(),
+      byEmail: new Map(),
+      byDocument: new Map(),
+      byPhone: new Map(),
+      byNameCity: new Map(),
+    };
+
+    for (const c of clients) {
+      const conflict = this.clientToConflict(c, 'legacy_code');
+      if (c.legacyCode) {
+        const norm = normalizeLegacyCode(c.legacyCode);
+        if (norm && !cache.byLegacyCode.has(norm)) {
+          cache.byLegacyCode.set(norm, { ...conflict, matchReason: 'legacy_code' });
+        }
+      }
+      const email = this.normalizeEmail(c.email);
+      if (email && !cache.byEmail.has(email)) {
+        cache.byEmail.set(email, { ...conflict, matchReason: 'email' });
+      }
+      if (c.document) {
+        const doc = c.document.replace(/\D/g, '');
+        if (doc && !cache.byDocument.has(doc)) {
+          cache.byDocument.set(doc, { ...conflict, matchReason: 'document' });
+        }
+      }
+      const phone = normalizePhone(c.phone);
+      if (phone && !cache.byPhone.has(phone)) {
+        cache.byPhone.set(phone, { ...conflict, matchReason: 'phone' });
+      }
+      const city = c.properties[0]?.city?.trim().toLowerCase();
+      if (city) {
+        const key = `${c.name.trim().toLowerCase()}|${city}`;
+        if (!cache.byNameCity.has(key)) {
+          cache.byNameCity.set(key, { ...conflict, matchReason: 'name_city' });
+        }
+      }
+    }
+
+    return cache;
+  }
+
+  findConflictCached(
+    cache: ConflictCache,
+    row: {
+      name: string;
+      document: string | null;
+      phone: string | null;
+      email: string | null;
+      city: string;
+      legacyCode: string | null;
+      groupKey: string | null;
+    },
+  ): ImportConflict | null {
+    const code = row.legacyCode
+      ? normalizeLegacyCode(row.legacyCode)
+      : row.groupKey?.trim() || null;
+    if (code) {
+      const hit = cache.byLegacyCode.get(code);
+      if (hit) return hit;
+    }
+
+    if (row.document?.trim()) {
+      const doc = row.document.replace(/\D/g, '');
+      const hit = cache.byDocument.get(doc);
+      if (hit) return hit;
+    }
+
+    const email = this.normalizeEmail(row.email);
+    if (email) {
+      const hit = cache.byEmail.get(email);
+      if (hit) return hit;
+    }
+
+    const phone = normalizePhone(row.phone);
+    if (phone) {
+      const hit = cache.byPhone.get(phone);
+      if (hit) return hit;
+    }
+
+    const cityNorm = row.city.trim().toLowerCase();
+    if (row.name.trim() && cityNorm) {
+      const key = `${row.name.trim().toLowerCase()}|${cityNorm}`;
+      const hit = cache.byNameCity.get(key);
+      if (hit) return hit;
+    }
+
+    return null;
   }
 
   async findConflict(
@@ -297,66 +503,24 @@ export class ClientImportsService {
       name: string;
       document: string | null;
       phone: string | null;
+      email: string | null;
       city: string;
+      legacyCode: string | null;
+      groupKey: string | null;
     },
   ): Promise<ImportConflict | null> {
-    if (row.document?.trim()) {
-      const doc = row.document.replace(/\D/g, '');
-      const byDoc = await this.prisma.client.findFirst({
-        where: {
-          tenantId,
-          deletedAt: null,
-          document: { contains: doc },
-        },
-        include: { properties: { take: 1, orderBy: { sortOrder: 'asc' } } },
-      });
-      if (byDoc) {
-        return this.toConflict(byDoc, 'document');
-      }
-    }
-
-    const phone = normalizePhone(row.phone);
-    if (phone) {
-      const clients = await this.prisma.client.findMany({
-        where: { tenantId, deletedAt: null, phone: { not: null } },
-        include: { properties: { take: 1, orderBy: { sortOrder: 'asc' } } },
-        take: 500,
-      });
-      const byPhone = clients.find(
-        (c) => normalizePhone(c.phone) === phone,
-      );
-      if (byPhone) {
-        return this.toConflict(byPhone, 'phone');
-      }
-    }
-
-    const cityNorm = row.city.trim().toLowerCase();
-    if (row.name.trim() && cityNorm) {
-      const byName = await this.prisma.client.findFirst({
-        where: {
-          tenantId,
-          deletedAt: null,
-          name: { equals: row.name.trim(), mode: 'insensitive' },
-          properties: {
-            some: { city: { equals: row.city.trim(), mode: 'insensitive' } },
-          },
-        },
-        include: { properties: { take: 1, orderBy: { sortOrder: 'asc' } } },
-      });
-      if (byName) {
-        return this.toConflict(byName, 'name_city');
-      }
-    }
-
-    return null;
+    const cache = await this.buildConflictCache(tenantId);
+    return this.findConflictCached(cache, row);
   }
 
-  private toConflict(
+  private clientToConflict(
     client: {
       id: string;
       name: string;
       document: string | null;
       phone: string | null;
+      email: string | null;
+      legacyCode: string | null;
       properties: Array<{ city: string }>;
     },
     matchReason: ImportConflict['matchReason'],
@@ -369,8 +533,11 @@ export class ClientImportsService {
         name: client.name,
         document: client.document,
         phone: client.phone,
+        email: client.email,
+        legacyCode: client.legacyCode,
         city: client.properties[0]?.city ?? null,
       },
     };
   }
+
 }

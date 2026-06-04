@@ -1,21 +1,31 @@
 'use client';
 
 import Link from 'next/link';
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { AppShell } from '@/components/AppShell';
 import { ClientImportUpload } from '@/components/clients/ClientImportUpload';
 import { ImportBatchTagsPanel } from '@/components/clients/ImportBatchTagsPanel';
+import { ImportConflictsPanel } from '@/components/clients/ImportConflictsPanel';
 import { ImportPreviewTable } from '@/components/clients/ImportPreviewTable';
 import { ImportColumnMappingInfo } from '@/components/clients/ImportColumnMappingInfo';
+import { ImportProgressBar } from '@/components/clients/ImportProgressBar';
 import { ImportReviewDrawer } from '@/components/clients/ImportReviewDrawer';
+import { ImportSourceBadge } from '@/components/clients/ImportSourceBadge';
 import type {
   BatchTags,
   CommitImportResult,
+  ImportProgressState,
   ImportRow,
   ParseImportResponse,
   TenantIntention,
 } from '@/types/client-import';
+import {
+  defaultResolutionForRow,
+  defaultSelectedForRow,
+} from '@/types/client-import';
 import type { LivestockCategory } from '@docs/shared';
+
+const COMMIT_CHUNK = 40;
 
 const emptyBatchTags = (): BatchTags => ({
   animalType: '',
@@ -29,8 +39,13 @@ function toImportRow(
   raw: ParseImportResponse['rows'][number],
   defaults: BatchTags,
 ): ImportRow {
+  const { resolution, conflictClientId } = defaultResolutionForRow(
+    raw.conflict,
+  );
   return {
     ...raw,
+    legacyCode: raw.legacyCode ?? null,
+    groupKey: raw.groupKey ?? null,
     animalType: raw.animalType ?? (defaults.animalType || null),
     animalSex: raw.animalSex ?? (defaults.animalSex || null),
     livestockCategory:
@@ -38,9 +53,9 @@ function toImportRow(
     intentionIds:
       raw.intentionIds?.length ? raw.intentionIds : [...defaults.intentionIds],
     intentionNotes: (raw.intentionNotes ?? defaults.intentionNotes) || null,
-    selected: !raw.needsReview && !raw.conflict,
-    resolution: raw.conflict ? 'create' : 'create',
-    conflictClientId: undefined,
+    selected: defaultSelectedForRow(raw),
+    resolution,
+    conflictClientId,
   };
 }
 
@@ -52,15 +67,20 @@ export default function ClientImportPage() {
     fileName: string;
     mimeType: string;
     sourceType: string;
+    sourceLabel?: string;
   } | null>(null);
   const [reviewIndex, setReviewIndex] = useState<number | null>(null);
-  const [parsing, setParsing] = useState(false);
-  const [committing, setCommitting] = useState(false);
+  const [progress, setProgress] = useState<ImportProgressState | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [result, setResult] = useState<CommitImportResult | null>(null);
   const [columnMapping, setColumnMapping] = useState<
     Record<string, number | undefined> | undefined
   >();
+
+  const commitAbortRef = useRef<AbortController | null>(null);
+
+  const busy =
+    progress?.phase === 'parsing' || progress?.phase === 'committing';
 
   useEffect(() => {
     fetch('/api/tenant-intentions')
@@ -73,7 +93,13 @@ export default function ClientImportPage() {
 
   const handleParse = useCallback(
     async (file: File) => {
-      setParsing(true);
+      setProgress({
+        phase: 'parsing',
+        current: 0,
+        total: 0,
+        label: 'Extraindo dados do arquivo…',
+        indeterminate: true,
+      });
       setError(null);
       setResult(null);
       try {
@@ -117,13 +143,14 @@ export default function ClientImportPage() {
           fileName: data.fileName,
           mimeType: data.mimeType,
           sourceType: data.sourceType,
+          sourceLabel: data.sourceLabel,
         });
         setColumnMapping(data.columnMapping);
         setRows(data.rows.map((r) => toImportRow(r, tags)));
       } catch (e) {
         setError(e instanceof Error ? e.message : 'Erro ao importar');
       } finally {
-        setParsing(false);
+        setProgress(null);
       }
     },
     [batchTags],
@@ -150,6 +177,32 @@ export default function ClientImportPage() {
     );
   }
 
+  function applyResolutionToConflicts(
+    resolution: 'update' | 'skip' | 'create',
+  ) {
+    setRows((prev) =>
+      prev.map((r) => {
+        if (!r.conflict) return r;
+        return {
+          ...r,
+          resolution,
+          conflictClientId:
+            resolution === 'update' ? r.conflict!.clientId : undefined,
+          selected: resolution !== 'skip',
+        };
+      }),
+    );
+  }
+
+  function cancelCommit() {
+    commitAbortRef.current?.abort();
+    commitAbortRef.current = null;
+    setProgress(null);
+    setError(
+      'Importação cancelada. As linhas já salvas permanecem no cadastro.',
+    );
+  }
+
   async function handleCommit() {
     if (!fileMeta) return;
     const selected = rows.filter((r) => r.selected);
@@ -158,15 +211,17 @@ export default function ClientImportPage() {
       return;
     }
 
-    const COMMIT_CHUNK = 40;
     const payloadRows = selected.map((r) => ({
       rowIndex: r.rowIndex,
       name: r.name,
       document: r.document,
+      legacyCode: r.legacyCode,
+      groupKey: r.groupKey,
       email: r.email,
       phone: r.phone,
       notes: r.notes,
       property: r.property,
+      additionalProperties: r.additionalProperties,
       animalType: r.animalType,
       animalSex: r.animalSex,
       livestockCategory: r.livestockCategory,
@@ -177,8 +232,21 @@ export default function ClientImportPage() {
       selected: true,
     }));
 
-    setCommitting(true);
+    const abort = new AbortController();
+    commitAbortRef.current = abort;
+
+    setProgress({
+      phase: 'committing',
+      current: 0,
+      total: payloadRows.length,
+      label: 'Salvando clientes…',
+      indeterminate: false,
+      importedCount: 0,
+      updatedCount: 0,
+      skippedCount: 0,
+    });
     setError(null);
+
     try {
       const totals: CommitImportResult = {
         importedCount: 0,
@@ -187,6 +255,8 @@ export default function ClientImportPage() {
       };
 
       for (let i = 0; i < payloadRows.length; i += COMMIT_CHUNK) {
+        if (abort.signal.aborted) break;
+
         const chunk = payloadRows.slice(i, i + COMMIT_CHUNK);
         const res = await fetch('/api/clients/import/commit', {
           method: 'POST',
@@ -197,6 +267,7 @@ export default function ClientImportPage() {
             sourceType: fileMeta.sourceType,
             rows: chunk,
           }),
+          signal: abort.signal,
         });
 
         let data: CommitImportResult & { message?: string } = {
@@ -220,7 +291,21 @@ export default function ClientImportPage() {
         totals.importedCount += data.importedCount ?? 0;
         totals.updatedCount += data.updatedCount ?? 0;
         totals.skippedCount += data.skippedCount ?? 0;
+
+        const processed = Math.min(i + chunk.length, payloadRows.length);
+        setProgress({
+          phase: 'committing',
+          current: processed,
+          total: payloadRows.length,
+          label: 'Salvando clientes…',
+          indeterminate: false,
+          importedCount: totals.importedCount,
+          updatedCount: totals.updatedCount,
+          skippedCount: totals.skippedCount,
+        });
       }
+
+      if (abort.signal.aborted) return;
 
       if (payloadRows.length > COMMIT_CHUNK) {
         await fetch('/api/clients/import/commit', {
@@ -238,15 +323,18 @@ export default function ClientImportPage() {
               skippedCount: totals.skippedCount,
             },
           }),
+          signal: abort.signal,
         });
       }
 
       setResult(totals);
       setRows((prev) => prev.filter((r) => !r.selected));
     } catch (e) {
+      if (e instanceof Error && e.name === 'AbortError') return;
       setError(e instanceof Error ? e.message : 'Erro ao importar');
     } finally {
-      setCommitting(false);
+      commitAbortRef.current = null;
+      setProgress(null);
     }
   }
 
@@ -275,8 +363,8 @@ export default function ClientImportPage() {
   return (
     <AppShell title="Importar clientes">
       <p style={{ color: 'var(--muted)', marginBottom: '1rem', fontSize: '0.9rem' }}>
-        Extraia clientes de bases antigas (PDF, Excel), revise os dados e cadastre
-        com etiquetas para segmentar depois.{' '}
+        Extraia clientes de bases antigas (PDF ETB, listas de leilão, Excel),
+        revise os dados e cadastre com etiquetas.{' '}
         <Link href="/clients">Voltar para clientes</Link>
       </p>
 
@@ -293,6 +381,12 @@ export default function ClientImportPage() {
           >
             Ver clientes importados →
           </Link>
+          <Link
+            href="/clients/hygiene"
+            style={{ fontSize: '0.875rem', display: 'block', marginTop: '0.35rem' }}
+          >
+            Ir para higienização →
+          </Link>
         </div>
       )}
 
@@ -300,18 +394,34 @@ export default function ClientImportPage() {
         <p style={{ color: 'var(--danger)', marginBottom: '1rem' }}>{error}</p>
       )}
 
-      <ClientImportUpload onFile={handleParse} disabled={parsing} />
-      {parsing && (
-        <p style={{ marginTop: '0.75rem', color: 'var(--muted)' }}>
-          Extraindo dados do arquivo…
-        </p>
-      )}
+      <ImportProgressBar
+        progress={progress}
+        onCancel={
+          progress?.phase === 'committing' ? cancelCommit : undefined
+        }
+      />
+
+      <ClientImportUpload onFile={handleParse} disabled={busy} />
 
       {(rows.length > 0 || fileMeta) && (
-        <>
+        <div className={busy ? 'import-workspace-busy' : undefined}>
+          {fileMeta && (
+            <ImportSourceBadge
+              sourceType={fileMeta.sourceType}
+              sourceLabel={fileMeta.sourceLabel}
+              fileName={fileMeta.fileName}
+              rowCount={rows.length}
+            />
+          )}
+
           {columnMapping && fileMeta?.sourceType === 'spreadsheet' && (
             <ImportColumnMappingInfo columnMapping={columnMapping} />
           )}
+
+          <ImportConflictsPanel
+            rows={rows}
+            onApplyToConflicts={applyResolutionToConflicts}
+          />
 
           <ImportBatchTagsPanel
             tags={batchTags}
@@ -332,15 +442,15 @@ export default function ClientImportPage() {
             }}
           >
             <p style={{ fontSize: '0.9rem', color: 'var(--muted)' }}>
-              {fileMeta?.fileName} — {rows.length} linha(s)
+              {selectedCount} selecionado(s) de {rows.length}
             </p>
             <button
               type="button"
               className="primary"
-              disabled={committing || selectedCount === 0}
+              disabled={busy || selectedCount === 0}
               onClick={() => void handleCommit()}
             >
-              {committing
+              {progress?.phase === 'committing'
                 ? 'Importando…'
                 : `Importar selecionados (${selectedCount})`}
             </button>
@@ -348,6 +458,7 @@ export default function ClientImportPage() {
 
           <ImportPreviewTable
             rows={rows}
+            sourceType={fileMeta?.sourceType}
             onToggleAll={(checked) =>
               setRows((prev) => prev.map((r) => ({ ...r, selected: checked })))
             }
@@ -360,7 +471,7 @@ export default function ClientImportPage() {
             }
             onReview={setReviewIndex}
           />
-        </>
+        </div>
       )}
 
       <ImportReviewDrawer

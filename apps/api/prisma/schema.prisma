@@ -250,6 +250,8 @@ model Client {
 
   document       String?
 
+  legacyCode     String?  @map("legacy_code")
+
   email          String?
 
   phone          String?
@@ -295,6 +297,8 @@ model Client {
   @@index([tenantId, name])
 
   @@index([tenantId, document])
+
+  @@index([tenantId, legacyCode])
 
   @@index([tenantId, animalType])
 
@@ -575,6 +579,28 @@ model ClientImportBatch {
   @@index([tenantId, createdAt(sort: Desc)])
 
   @@map("client_import_batches")
+
+}
+
+
+
+model BrazilianCity {
+
+  id             Int    @id
+
+  name           String
+
+  state          String @db.Char(2)
+
+  normalizedName String @map("normalized_name")
+
+
+
+  @@unique([normalizedName, state])
+
+  @@index([state])
+
+  @@map("brazilian_cities")
 
 }
 
