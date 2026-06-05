@@ -14,10 +14,9 @@ export async function GET(req: NextRequest) {
   const page = searchParams.get('page') ?? '1';
   const limit = searchParams.get('limit') ?? '20';
 
-  const res = await apiFetch(
+  const data = await apiFetch(
     `/clients/exports/history?page=${page}&limit=${limit}`,
-    { token },
+    { accessToken: token },
   );
-  const data = await res.json();
-  return NextResponse.json(data, { status: res.status });
+  return NextResponse.json(data);
 }

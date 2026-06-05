@@ -10,7 +10,6 @@ export async function GET() {
     return NextResponse.json({ message: 'Não autenticado' }, { status: 401 });
   }
 
-  const res = await apiFetch('/clients/exports/summary', { token });
-  const data = await res.json();
-  return NextResponse.json(data, { status: res.status });
+  const data = await apiFetch('/clients/exports/summary', { accessToken: token });
+  return NextResponse.json(data);
 }
