@@ -38,6 +38,26 @@ export async function GET(req: NextRequest) {
 
   const ddd = searchParams.get('ddd');
 
+  const nearCity = searchParams.get('nearCity');
+
+  const nearState = searchParams.get('nearState');
+
+  const radiusKm = searchParams.get('radiusKm');
+
+  const boundsSouth = searchParams.get('boundsSouth');
+
+  const boundsNorth = searchParams.get('boundsNorth');
+
+  const boundsWest = searchParams.get('boundsWest');
+
+  const boundsEast = searchParams.get('boundsEast');
+
+  const areaCenterLat = searchParams.get('areaCenterLat');
+
+  const areaCenterLng = searchParams.get('areaCenterLng');
+
+  const areaRadiusKm = searchParams.get('areaRadiusKm');
+
   const query = new URLSearchParams({ page, limit });
 
   if (q) query.set('q', q);
@@ -53,6 +73,26 @@ export async function GET(req: NextRequest) {
   if (state) query.set('state', state);
 
   if (ddd) query.set('ddd', ddd);
+
+  if (nearCity) query.set('nearCity', nearCity);
+
+  if (nearState) query.set('nearState', nearState);
+
+  if (radiusKm) query.set('radiusKm', radiusKm);
+
+  if (boundsSouth) query.set('boundsSouth', boundsSouth);
+
+  if (boundsNorth) query.set('boundsNorth', boundsNorth);
+
+  if (boundsWest) query.set('boundsWest', boundsWest);
+
+  if (boundsEast) query.set('boundsEast', boundsEast);
+
+  if (areaCenterLat) query.set('areaCenterLat', areaCenterLat);
+
+  if (areaCenterLng) query.set('areaCenterLng', areaCenterLng);
+
+  if (areaRadiusKm) query.set('areaRadiusKm', areaRadiusKm);
 
 
 

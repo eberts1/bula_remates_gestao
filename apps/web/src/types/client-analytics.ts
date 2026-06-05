@@ -7,6 +7,7 @@ export interface ClientAnalyticsOverview {
   byRegion: {
     byState: { state: string; clients: number }[];
     topCities: { city: string; state: string; clients: number }[];
+    byDddRegion: { region: string; uf: string; clients: number }[];
     semRegiao: number;
   };
   farms: {

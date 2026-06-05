@@ -69,6 +69,10 @@ export function ClientToolbar({
           <Link href="/clients/hygiene" className="ghost clients-import-link">
             Higienizar
           </Link>
+
+          <Link href="/clients/map" className="ghost clients-import-link">
+            Mapa
+          </Link>
         </div>
       </div>
 

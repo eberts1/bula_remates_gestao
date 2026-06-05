@@ -27,6 +27,7 @@ export interface ClientAnalyticsOverview {
   byRegion: {
     byState: { state: string; clients: number }[];
     topCities: { city: string; state: string; clients: number }[];
+    byDddRegion: { region: string; uf: string; clients: number }[];
     semRegiao: number;
   };
   farms: {
@@ -82,13 +83,31 @@ export class ClientAnalyticsService {
   private computeByRegion(clients: AnalyticsClient[]) {
     const stateClients = new Map<string, Set<string>>();
     const cityClients = new Map<string, Set<string>>();
+    const dddRegionClients = new Map<string, Set<string>>();
 
     let semRegiao = 0;
 
     for (const client of clients) {
       if (client.properties.length === 0) {
         semRegiao += 1;
-        continue;
+      }
+
+      const phones = [
+        client.phone,
+        ...client.properties.map((p) => p.phone),
+      ].filter(Boolean) as string[];
+
+      for (const phone of phones) {
+        const ddd = this.geo.extractDddFromPhone(phone);
+        if (!ddd) continue;
+        const region = this.geo.getDddRegion(ddd);
+        if (!region) continue;
+        const key = `${region.regionLabel}|${region.uf}`;
+        if (!dddRegionClients.has(key)) {
+          dddRegionClients.set(key, new Set());
+        }
+        dddRegionClients.get(key)!.add(client.id);
+        break;
       }
 
       const statesSeen = new Set<string>();
@@ -125,7 +144,14 @@ export class ClientAnalyticsService {
       .sort((a, b) => b.clients - a.clients)
       .slice(0, 10);
 
-    return { byState, topCities, semRegiao };
+    const byDddRegion = [...dddRegionClients.entries()]
+      .map(([key, ids]) => {
+        const [region, uf] = key.split('|');
+        return { region, uf, clients: ids.size };
+      })
+      .sort((a, b) => b.clients - a.clients);
+
+    return { byState, topCities, byDddRegion, semRegiao };
   }
 
   private computeFarms(clients: AnalyticsClient[]) {

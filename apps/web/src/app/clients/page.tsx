@@ -29,13 +29,17 @@ function ClientsPageContent() {
     animalSex: searchParams.get('animalSex') ?? '',
     livestockCategory: searchParams.get('livestockCategory') ?? '',
     intentionId: searchParams.get('intentionId') ?? '',
+    nearCity: searchParams.get('nearCity') ?? '',
+    nearState: searchParams.get('nearState') ?? '',
+    radiusKm: searchParams.get('radiusKm') ?? '',
   });
   const [filtersOpen, setFiltersOpen] = useState(
     Boolean(
       searchParams.get('animalType') ||
         searchParams.get('animalSex') ||
         searchParams.get('livestockCategory') ||
-        searchParams.get('intentionId'),
+        searchParams.get('intentionId') ||
+        searchParams.get('nearCity'),
     ),
   );
 
@@ -81,6 +85,11 @@ function ClientsPageContent() {
         params.set('livestockCategory', tagFilters.livestockCategory);
       }
       if (tagFilters.intentionId) params.set('intentionId', tagFilters.intentionId);
+      if (tagFilters.nearCity && tagFilters.nearState && tagFilters.radiusKm) {
+        params.set('nearCity', tagFilters.nearCity);
+        params.set('nearState', tagFilters.nearState);
+        params.set('radiusKm', tagFilters.radiusKm);
+      }
 
       const res = await fetch(`/api/clients?${params}`);
       const data = await res.json();

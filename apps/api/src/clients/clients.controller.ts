@@ -42,6 +42,7 @@ import { CreateClientDto } from './dto/create-client.dto';
 
 import { UpdateClientDto } from './dto/update-client.dto';
 import { MergeClientsDto } from './dto/merge-clients.dto';
+import { ExportClientsDto } from './dto/export-clients.dto';
 
 
 
@@ -79,6 +80,26 @@ export class ClientsController {
 
     @Query('ddd') ddd?: string,
 
+    @Query('nearCity') nearCity?: string,
+
+    @Query('nearState') nearState?: string,
+
+    @Query('radiusKm') radiusKm?: string,
+
+    @Query('boundsSouth') boundsSouth?: string,
+
+    @Query('boundsNorth') boundsNorth?: string,
+
+    @Query('boundsWest') boundsWest?: string,
+
+    @Query('boundsEast') boundsEast?: string,
+
+    @Query('areaCenterLat') areaCenterLat?: string,
+
+    @Query('areaCenterLng') areaCenterLng?: string,
+
+    @Query('areaRadiusKm') areaRadiusKm?: string,
+
   ) {
 
     return this.clientsService.list(
@@ -91,9 +112,36 @@ export class ClientsController {
 
       limit ? Number(limit) : 20,
 
-      { animalType, animalSex, livestockCategory, intentionId, state, ddd },
+      {
+        animalType,
+        animalSex,
+        livestockCategory,
+        intentionId,
+        state,
+        ddd,
+        nearCity,
+        nearState,
+        radiusKm: radiusKm ? Number(radiusKm) : undefined,
+        boundsSouth: boundsSouth ? Number(boundsSouth) : undefined,
+        boundsNorth: boundsNorth ? Number(boundsNorth) : undefined,
+        boundsWest: boundsWest ? Number(boundsWest) : undefined,
+        boundsEast: boundsEast ? Number(boundsEast) : undefined,
+        areaCenterLat: areaCenterLat ? Number(areaCenterLat) : undefined,
+        areaCenterLng: areaCenterLng ? Number(areaCenterLng) : undefined,
+        areaRadiusKm: areaRadiusKm ? Number(areaRadiusKm) : undefined,
+      },
 
     );
+
+  }
+
+
+
+  @Get('map')
+
+  map(@CurrentUser() user: JwtPayload) {
+
+    return this.clientsService.mapPoints(user);
 
   }
 
@@ -121,6 +169,26 @@ export class ClientsController {
 
     @Query('ddd') ddd?: string,
 
+    @Query('nearCity') nearCity?: string,
+
+    @Query('nearState') nearState?: string,
+
+    @Query('radiusKm') radiusKm?: string,
+
+    @Query('boundsSouth') boundsSouth?: string,
+
+    @Query('boundsNorth') boundsNorth?: string,
+
+    @Query('boundsWest') boundsWest?: string,
+
+    @Query('boundsEast') boundsEast?: string,
+
+    @Query('areaCenterLat') areaCenterLat?: string,
+
+    @Query('areaCenterLng') areaCenterLng?: string,
+
+    @Query('areaRadiusKm') areaRadiusKm?: string,
+
   ) {
 
     const buffer = await this.clientsService.exportXlsx(user, q, {
@@ -136,6 +204,26 @@ export class ClientsController {
       state,
 
       ddd,
+
+      nearCity,
+
+      nearState,
+
+      radiusKm: radiusKm ? Number(radiusKm) : undefined,
+
+      boundsSouth: boundsSouth ? Number(boundsSouth) : undefined,
+
+      boundsNorth: boundsNorth ? Number(boundsNorth) : undefined,
+
+      boundsWest: boundsWest ? Number(boundsWest) : undefined,
+
+      boundsEast: boundsEast ? Number(boundsEast) : undefined,
+
+      areaCenterLat: areaCenterLat ? Number(areaCenterLat) : undefined,
+
+      areaCenterLng: areaCenterLng ? Number(areaCenterLng) : undefined,
+
+      areaRadiusKm: areaRadiusKm ? Number(areaRadiusKm) : undefined,
 
     });
 
@@ -156,6 +244,80 @@ export class ClientsController {
     );
 
     res.send(buffer);
+
+  }
+
+
+
+  @Post('export')
+
+  @Roles(TenantRole.owner, TenantRole.admin, TenantRole.member)
+
+  async exportWithLog(
+
+    @CurrentUser() user: JwtPayload,
+
+    @Body() dto: ExportClientsDto,
+
+    @Res() res: Response,
+
+  ) {
+
+    const { buffer } = await this.clientsService.exportXlsxWithLog(user, dto);
+
+    res.setHeader(
+
+      'Content-Type',
+
+      'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+
+    );
+
+    res.setHeader(
+
+      'Content-Disposition',
+
+      'attachment; filename="contatos.xlsx"',
+
+    );
+
+    res.send(buffer);
+
+  }
+
+
+
+  @Get('exports/history')
+
+  exportHistory(
+
+    @CurrentUser() user: JwtPayload,
+
+    @Query('page') page?: string,
+
+    @Query('limit') limit?: string,
+
+  ) {
+
+    return this.clientsService.listExportHistory(
+
+      user,
+
+      page ? Number(page) : 1,
+
+      limit ? Number(limit) : 20,
+
+    );
+
+  }
+
+
+
+  @Get('exports/summary')
+
+  exportSummary(@CurrentUser() user: JwtPayload) {
+
+    return this.clientsService.getExportSummary(user);
 
   }
 

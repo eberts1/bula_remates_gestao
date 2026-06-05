@@ -52,6 +52,20 @@ enum ClientFormTokenType {
 
 
 
+enum ClientExportPurpose {
+
+  message_dispatcher
+
+  requested_listing
+
+  internal
+
+  other
+
+}
+
+
+
 model User {
 
   id           String   @id @default(uuid()) @db.Uuid
@@ -81,6 +95,8 @@ model User {
   clientFormTokens  ClientFormToken[]
 
   clientImportBatches ClientImportBatch[]
+
+  clientExportBatches ClientExportBatch[]
 
   auditLogs         AuditLog[]
 
@@ -127,6 +143,8 @@ model Tenant {
   tenantIntentions   TenantIntention[]
 
   clientImportBatches ClientImportBatch[]
+
+  clientExportBatches ClientExportBatch[]
 
   auditLogs           AuditLog[]
 
@@ -590,6 +608,46 @@ model ClientImportBatch {
 
 
 
+model ClientExportBatch {
+
+  id            String               @id @default(uuid()) @db.Uuid
+
+  tenantId      String               @map("tenant_id") @db.Uuid
+
+  createdById   String               @map("created_by") @db.Uuid
+
+  purpose       ClientExportPurpose
+
+  destination   String?
+
+  recipientName String?              @map("recipient_name")
+
+  notes         String?
+
+  clientCount   Int                  @map("client_count")
+
+  filters       Json?
+
+  createdAt     DateTime             @default(now()) @map("created_at")
+
+
+
+  tenant    Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  createdBy User   @relation(fields: [createdById], references: [id])
+
+
+
+  @@index([tenantId, createdAt(sort: Desc)])
+
+  @@index([tenantId, purpose])
+
+  @@map("client_export_batches")
+
+}
+
+
+
 model AuditLog {
 
   id          String   @id @default(uuid()) @db.Uuid
@@ -647,6 +705,10 @@ model BrazilianCity {
   state          String @db.Char(2)
 
   normalizedName String @map("normalized_name")
+
+  latitude       Float?
+
+  longitude      Float?
 
 
 

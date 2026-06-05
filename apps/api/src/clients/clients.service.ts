@@ -3,7 +3,7 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
-import { DocumentStatus, Prisma } from '@prisma/client';
+import { ClientExportPurpose, DocumentStatus, Prisma } from '@prisma/client';
 import { JwtPayload } from '../auth/auth.types';
 import { PrismaService } from '../prisma/prisma.service';
 import * as XLSX from 'xlsx';
@@ -16,7 +16,14 @@ import { CreateClientDto } from './dto/create-client.dto';
 import { ClientPropertyDto } from './dto/client-property.dto';
 import { UpdateClientDto } from './dto/update-client.dto';
 import { MergeClientsDto } from './dto/merge-clients.dto';
-import { ensureBrazilMobileNinthDigit } from '@docs/shared';
+import {
+  CLIENT_EXPORT_PURPOSE_LABELS,
+  clientExportRequestSchema,
+  ensureBrazilMobileNinthDigit,
+} from '@docs/shared';
+import { GeoService } from '../geo/geo.service';
+import { AuditService } from '../audit/audit.service';
+import { ExportClientsDto } from './dto/export-clients.dto';
 
 export interface ClientListFilters {
   animalType?: string;
@@ -25,6 +32,26 @@ export interface ClientListFilters {
   intentionId?: string;
   state?: string;
   ddd?: string;
+  nearCity?: string;
+  nearState?: string;
+  radiusKm?: number;
+  boundsSouth?: number;
+  boundsNorth?: number;
+  boundsWest?: number;
+  boundsEast?: number;
+  areaCenterLat?: number;
+  areaCenterLng?: number;
+  areaRadiusKm?: number;
+}
+
+export interface ClientMapPoint {
+  id: string;
+  name: string;
+  lat: number;
+  lng: number;
+  approx: boolean;
+  source: 'city' | 'ddd';
+  label: string;
 }
 
 const EXPORT_HEADERS = [
@@ -58,7 +85,11 @@ const clientInclude = {
 
 @Injectable()
 export class ClientsService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly geo: GeoService,
+    private readonly audit: AuditService,
+  ) {}
 
   async list(
     user: JwtPayload,
@@ -91,6 +122,151 @@ export class ClientsService {
   }
 
   async exportXlsx(user: JwtPayload, q?: string, filters?: ClientListFilters) {
+    const result = await this.buildExportWorkbook(user, q, filters);
+    return result.buffer;
+  }
+
+  async exportXlsxWithLog(user: JwtPayload, dto: ExportClientsDto) {
+    const parsed = clientExportRequestSchema.safeParse(dto);
+    if (!parsed.success) {
+      throw new BadRequestException(
+        parsed.error.issues.map((issue) => issue.message).join('; '),
+      );
+    }
+
+    const filters = this.normalizeExportFilters(parsed.data.filters);
+    const q = parsed.data.filters?.q?.trim() || undefined;
+    const { buffer, clientCount } = await this.buildExportWorkbook(
+      user,
+      q,
+      filters,
+    );
+
+    const batch = await this.prisma.clientExportBatch.create({
+      data: {
+        tenantId: user.tenantId,
+        createdById: user.sub,
+        purpose: parsed.data.purpose as ClientExportPurpose,
+        destination: parsed.data.destination?.trim() || null,
+        recipientName: parsed.data.recipientName?.trim() || null,
+        notes: parsed.data.notes?.trim() || null,
+        clientCount,
+        filters: this.serializeExportFilters(q, filters),
+      },
+    });
+
+    const purposeLabel = CLIENT_EXPORT_PURPOSE_LABELS[parsed.data.purpose];
+    const summaryParts = [
+      `${clientCount} contato(s) exportados`,
+      purposeLabel,
+    ];
+    if (parsed.data.destination?.trim()) {
+      summaryParts.push(`destino: ${parsed.data.destination.trim()}`);
+    }
+    if (parsed.data.recipientName?.trim()) {
+      summaryParts.push(`solicitante: ${parsed.data.recipientName.trim()}`);
+    }
+
+    void this.audit.log({
+      tenantId: user.tenantId,
+      userId: user.sub,
+      actorEmail: user.email,
+      action: 'client_export.create',
+      entityType: 'client_export_batch',
+      entityId: batch.id,
+      summary: summaryParts.join(' · '),
+      metadata: {
+        purpose: parsed.data.purpose,
+        destination: parsed.data.destination ?? null,
+        recipientName: parsed.data.recipientName ?? null,
+        notes: parsed.data.notes ?? null,
+        clientCount,
+        filters: this.serializeExportFilters(q, filters),
+      },
+    });
+
+    return { buffer, clientCount, batchId: batch.id };
+  }
+
+  async listExportHistory(user: JwtPayload, page = 1, limit = 20) {
+    const skip = (page - 1) * limit;
+    const where = { tenantId: user.tenantId };
+
+    const [items, total] = await Promise.all([
+      this.prisma.clientExportBatch.findMany({
+        where,
+        orderBy: { createdAt: 'desc' },
+        skip,
+        take: limit,
+        include: {
+          createdBy: {
+            select: { id: true, name: true, email: true },
+          },
+        },
+      }),
+      this.prisma.clientExportBatch.count({ where }),
+    ]);
+
+    return {
+      items: items.map((item) => ({
+        id: item.id,
+        purpose: item.purpose,
+        destination: item.destination,
+        recipientName: item.recipientName,
+        notes: item.notes,
+        clientCount: item.clientCount,
+        filters: item.filters,
+        createdAt: item.createdAt.toISOString(),
+        createdBy: item.createdBy,
+      })),
+      total,
+      page,
+      limit,
+      totalPages: Math.ceil(total / limit) || 1,
+    };
+  }
+
+  async getExportSummary(user: JwtPayload) {
+    const since = new Date();
+    since.setDate(since.getDate() - 30);
+
+    const [totals, byPurpose, recentCount] = await Promise.all([
+      this.prisma.clientExportBatch.aggregate({
+        where: { tenantId: user.tenantId },
+        _count: { _all: true },
+        _sum: { clientCount: true },
+      }),
+      this.prisma.clientExportBatch.groupBy({
+        by: ['purpose'],
+        where: { tenantId: user.tenantId },
+        _count: { _all: true },
+        _sum: { clientCount: true },
+      }),
+      this.prisma.clientExportBatch.count({
+        where: {
+          tenantId: user.tenantId,
+          createdAt: { gte: since },
+        },
+      }),
+    ]);
+
+    return {
+      totalExports: totals._count._all,
+      totalClientsExported: totals._sum.clientCount ?? 0,
+      exportsLast30Days: recentCount,
+      byPurpose: byPurpose.map((row) => ({
+        purpose: row.purpose,
+        exportCount: row._count._all,
+        clientCount: row._sum.clientCount ?? 0,
+      })),
+    };
+  }
+
+  private async buildExportWorkbook(
+    user: JwtPayload,
+    q?: string,
+    filters?: ClientListFilters,
+  ) {
     const where = await this.buildListWhere(user.tenantId, q, filters);
     const clients = await this.prisma.client.findMany({
       where,
@@ -116,7 +292,70 @@ export class ClientsService {
     const sheet = XLSX.utils.aoa_to_sheet([[...EXPORT_HEADERS], ...rows]);
     const workbook = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(workbook, sheet, 'Contatos');
-    return XLSX.write(workbook, { type: 'buffer', bookType: 'xlsx' }) as Buffer;
+    const buffer = XLSX.write(workbook, {
+      type: 'buffer',
+      bookType: 'xlsx',
+    }) as Buffer;
+
+    return { buffer, clientCount: clients.length };
+  }
+
+  private normalizeExportFilters(
+    filters?: ExportClientsDto['filters'],
+  ): ClientListFilters | undefined {
+    if (!filters) return undefined;
+
+    return {
+      animalType: filters.animalType,
+      animalSex: filters.animalSex,
+      livestockCategory: filters.livestockCategory,
+      intentionId: filters.intentionId,
+      state: filters.state,
+      ddd: filters.ddd,
+      nearCity: filters.nearCity,
+      nearState: filters.nearState,
+      radiusKm: filters.radiusKm,
+      boundsSouth: filters.boundsSouth,
+      boundsNorth: filters.boundsNorth,
+      boundsWest: filters.boundsWest,
+      boundsEast: filters.boundsEast,
+      areaCenterLat: filters.areaCenterLat,
+      areaCenterLng: filters.areaCenterLng,
+      areaRadiusKm: filters.areaRadiusKm,
+    };
+  }
+
+  private serializeExportFilters(
+    q?: string,
+    filters?: ClientListFilters,
+  ): Prisma.InputJsonValue {
+    const payload: Record<string, string | number> = {};
+    if (q) payload.q = q;
+    if (filters?.animalType) payload.animalType = filters.animalType;
+    if (filters?.animalSex) payload.animalSex = filters.animalSex;
+    if (filters?.livestockCategory) {
+      payload.livestockCategory = filters.livestockCategory;
+    }
+    if (filters?.intentionId) payload.intentionId = filters.intentionId;
+    if (filters?.state) payload.state = filters.state;
+    if (filters?.ddd) payload.ddd = filters.ddd;
+    if (filters?.nearCity) payload.nearCity = filters.nearCity;
+    if (filters?.nearState) payload.nearState = filters.nearState;
+    if (filters?.radiusKm != null) payload.radiusKm = filters.radiusKm;
+    if (filters?.boundsSouth != null) payload.boundsSouth = filters.boundsSouth;
+    if (filters?.boundsNorth != null) payload.boundsNorth = filters.boundsNorth;
+    if (filters?.boundsWest != null) payload.boundsWest = filters.boundsWest;
+    if (filters?.boundsEast != null) payload.boundsEast = filters.boundsEast;
+    if (filters?.areaCenterLat != null) {
+      payload.areaCenterLat = filters.areaCenterLat;
+    }
+    if (filters?.areaCenterLng != null) {
+      payload.areaCenterLng = filters.areaCenterLng;
+    }
+    if (filters?.areaRadiusKm != null) {
+      payload.areaRadiusKm = filters.areaRadiusKm;
+    }
+    return payload;
   }
 
   private async buildListWhere(
@@ -131,6 +370,8 @@ export class ClientsService {
       dddFilter.length === 2
         ? await this.buildDddWhere(tenantId, dddFilter)
         : {};
+    const proximityWhere = this.buildProximityWhere(filters);
+    const mapAreaWhere = await this.buildMapAreaWhere(tenantId, filters);
 
     return {
       tenantId,
@@ -156,7 +397,145 @@ export class ClientsService {
         : {}),
       ...searchWhere,
       ...dddWhere,
+      ...proximityWhere,
+      ...mapAreaWhere,
     };
+  }
+
+  private async buildMapAreaWhere(
+    tenantId: string,
+    filters?: ClientListFilters,
+  ): Promise<Prisma.ClientWhereInput> {
+    const hasBounds =
+      filters?.boundsSouth != null &&
+      filters?.boundsNorth != null &&
+      filters?.boundsWest != null &&
+      filters?.boundsEast != null;
+    const hasCircle =
+      filters?.areaCenterLat != null &&
+      filters?.areaCenterLng != null &&
+      filters?.areaRadiusKm != null &&
+      filters.areaRadiusKm > 0;
+
+    if (!hasBounds && !hasCircle) return {};
+
+    const clients = await this.prisma.client.findMany({
+      where: { tenantId, deletedAt: null },
+      select: {
+        id: true,
+        phone: true,
+        properties: {
+          orderBy: { sortOrder: 'asc' },
+          select: { city: true, state: true, phone: true },
+        },
+      },
+    });
+
+    const ids: string[] = [];
+    for (const client of clients) {
+      const location = this.geo.resolveClientLocation({
+        phone: client.phone,
+        properties: client.properties,
+      });
+      if (!location) continue;
+
+      const inArea = hasCircle
+        ? this.geo.isPointInCircle(
+            location.lat,
+            location.lng,
+            {
+              lat: filters!.areaCenterLat!,
+              lng: filters!.areaCenterLng!,
+            },
+            filters!.areaRadiusKm!,
+          )
+        : this.geo.isPointInBounds(location.lat, location.lng, {
+            south: filters!.boundsSouth!,
+            north: filters!.boundsNorth!,
+            west: filters!.boundsWest!,
+            east: filters!.boundsEast!,
+          });
+
+      if (inArea) ids.push(client.id);
+    }
+
+    return ids.length > 0 ? { id: { in: ids } } : { id: { in: [] } };
+  }
+
+  private buildProximityWhere(
+    filters?: ClientListFilters,
+  ): Prisma.ClientWhereInput {
+    const nearCity = filters?.nearCity?.trim();
+    const nearState = filters?.nearState?.trim().toUpperCase();
+    const radiusKm = filters?.radiusKm;
+
+    if (!nearCity || !nearState || !radiusKm || radiusKm <= 0) {
+      return {};
+    }
+
+    const origin = this.geo.getCityCoords(nearCity, nearState);
+    if (!origin) {
+      return { id: { in: [] } };
+    }
+
+    const citiesInRadius = this.geo.citiesWithinRadius(
+      origin.lat,
+      origin.lng,
+      radiusKm,
+    );
+    if (citiesInRadius.length === 0) {
+      return { id: { in: [] } };
+    }
+
+    return {
+      properties: {
+        some: {
+          OR: citiesInRadius.map((entry) => ({
+            city: { equals: entry.city, mode: 'insensitive' as const },
+            state: { equals: entry.state },
+          })),
+        },
+      },
+    };
+  }
+
+  async mapPoints(user: JwtPayload): Promise<{ items: ClientMapPoint[] }> {
+    const clients = await this.prisma.client.findMany({
+      where: {
+        tenantId: user.tenantId,
+        deletedAt: null,
+        isDefault: false,
+      },
+      select: {
+        id: true,
+        name: true,
+        phone: true,
+        properties: {
+          orderBy: { sortOrder: 'asc' },
+          select: { city: true, state: true, phone: true },
+        },
+      },
+    });
+
+    const items: ClientMapPoint[] = [];
+    for (const client of clients) {
+      const location = this.geo.resolveClientLocation({
+        phone: client.phone,
+        properties: client.properties,
+      });
+      if (!location) continue;
+      items.push({
+        id: client.id,
+        name: client.name,
+        lat: location.lat,
+        lng: location.lng,
+        approx: location.approx,
+        source: location.source,
+        label: location.label,
+      });
+    }
+
+    return { items };
   }
 
   private async buildDddWhere(

@@ -83,6 +83,22 @@ export function RegionSection({ data }: Props) {
           </ul>
         </div>
       )}
+
+      {data.byDddRegion.length > 0 && (
+        <div className="dashboard-top-cities">
+          <h3 className="dashboard-subtitle">Por região de DDD</h3>
+          <ul className="dashboard-city-list">
+            {data.byDddRegion.slice(0, 10).map((entry) => (
+              <li key={`${entry.region}-${entry.uf}`}>
+                <span>
+                  {entry.region} ({entry.uf})
+                </span>
+                <strong>{entry.clients}</strong>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
     </section>
   );
 }

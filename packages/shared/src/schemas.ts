@@ -322,3 +322,80 @@ export type ImportCommitInput = z.infer<typeof importCommitSchema>;
 export type ImportCommitRow = z.infer<typeof importCommitRowSchema>;
 
 
+export const CLIENT_EXPORT_PURPOSES = [
+  'message_dispatcher',
+  'requested_listing',
+  'internal',
+  'other',
+] as const;
+
+export const CLIENT_EXPORT_PURPOSE_LABELS: Record<
+  (typeof CLIENT_EXPORT_PURPOSES)[number],
+  string
+> = {
+  message_dispatcher: 'Disparador de mensagens',
+  requested_listing: 'Listagem solicitada',
+  internal: 'Uso interno',
+  other: 'Outro',
+};
+
+const clientExportPurposeSchema = z.enum(CLIENT_EXPORT_PURPOSES);
+
+const clientExportFiltersSchema = z
+  .object({
+    q: z.string().optional(),
+    animalType: z.string().optional(),
+    animalSex: z.string().optional(),
+    livestockCategory: z.string().optional(),
+    intentionId: z.string().uuid().optional(),
+    state: z.string().optional(),
+    ddd: z.string().optional(),
+    nearCity: z.string().optional(),
+    nearState: z.string().optional(),
+    radiusKm: z.coerce.number().optional(),
+    boundsSouth: z.coerce.number().optional(),
+    boundsNorth: z.coerce.number().optional(),
+    boundsWest: z.coerce.number().optional(),
+    boundsEast: z.coerce.number().optional(),
+    areaCenterLat: z.coerce.number().optional(),
+    areaCenterLng: z.coerce.number().optional(),
+    areaRadiusKm: z.coerce.number().optional(),
+  })
+  .optional();
+
+export const clientExportRequestSchema = z
+  .object({
+    filters: clientExportFiltersSchema,
+    purpose: clientExportPurposeSchema,
+    destination: z.string().trim().max(200).optional(),
+    recipientName: z.string().trim().max(120).optional(),
+    notes: z.string().trim().max(1000).optional(),
+  })
+  .superRefine((data, ctx) => {
+    if (data.purpose === 'message_dispatcher' && !data.destination?.trim()) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: 'Informe o leilão ou campanha de destino',
+        path: ['destination'],
+      });
+    }
+    if (data.purpose === 'requested_listing' && !data.recipientName?.trim()) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: 'Informe quem solicitou a listagem',
+        path: ['recipientName'],
+      });
+    }
+    if (data.purpose === 'other' && !data.notes?.trim() && !data.destination?.trim()) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: 'Descreva o motivo da exportação',
+        path: ['notes'],
+      });
+    }
+  });
+
+export type ClientExportPurpose = (typeof CLIENT_EXPORT_PURPOSES)[number];
+
+export type ClientExportRequestInput = z.infer<typeof clientExportRequestSchema>;
+

@@ -5,6 +5,7 @@ import {
   ANIMAL_TYPES,
   LIVESTOCK_CATEGORIES,
 } from '@docs/shared';
+import { CityUfField } from '@/components/clients/CityUfField';
 import type { TenantIntention } from '@/types/client-import';
 
 const ANIMAL_TYPE_LABELS: Record<string, string> = {
@@ -31,10 +32,19 @@ export interface TagFilterValues {
   animalSex: string;
   livestockCategory: string;
   intentionId: string;
+  nearCity: string;
+  nearState: string;
+  radiusKm: string;
 }
 
 export function countActiveFilters(values: TagFilterValues): number {
-  return Object.values(values).filter(Boolean).length;
+  let count = 0;
+  if (values.animalType) count += 1;
+  if (values.animalSex) count += 1;
+  if (values.livestockCategory) count += 1;
+  if (values.intentionId) count += 1;
+  if (values.nearCity && values.nearState && values.radiusKm) count += 1;
+  return count;
 }
 
 export function emptyTagFilters(): TagFilterValues {
@@ -43,6 +53,9 @@ export function emptyTagFilters(): TagFilterValues {
     animalSex: '',
     livestockCategory: '',
     intentionId: '',
+    nearCity: '',
+    nearState: '',
+    radiusKm: '',
   };
 }
 
@@ -115,6 +128,29 @@ export function ClientTagFilters({ values, intentions, onChange }: Props) {
           ))}
         </select>
       </label>
+
+      <div className="client-proximity-filter">
+        <span className="client-proximity-label">Proximidade</span>
+        <CityUfField
+          city={values.nearCity}
+          state={values.nearState}
+          onChange={({ city, state }) =>
+            onChange({ ...values, nearCity: city, nearState: state })
+          }
+        />
+        <label>
+          Raio (km)
+          <input
+            type="number"
+            min={1}
+            max={500}
+            step={10}
+            placeholder="ex: 100"
+            value={values.radiusKm}
+            onChange={(e) => set('radiusKm', e.target.value)}
+          />
+        </label>
+      </div>
     </div>
   );
 }

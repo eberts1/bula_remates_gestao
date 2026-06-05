@@ -1,9 +1,12 @@
 'use client';
 
+import dynamic from 'next/dynamic';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 
 import { AppShell } from '@/components/AppShell';
 import { BRAZIL_STATES } from '@/components/clients/CityUfField';
+import { ClientExportDialog } from '@/components/clients/ClientExportDialog';
+import { ClientExportHistory } from '@/components/clients/ClientExportHistory';
 import { ClientExportPreviewTable } from '@/components/clients/ClientExportPreviewTable';
 import { ClientListSummary } from '@/components/clients/ClientListSummary';
 import {
@@ -14,6 +17,20 @@ import {
 } from '@/components/clients/ClientTagFilters';
 import type { Client } from '@/types/client';
 import type { TenantIntention } from '@/types/client-import';
+import type { ClientExportRequest } from '@/types/client-export';
+import {
+  exportClientsWithPurpose,
+  filtersFromSearchParams,
+} from '@/lib/client-export';
+import { appendMapAreaToParams, type MapAreaSelection } from '@/types/map-area';
+
+const ClientsMapPanel = dynamic(
+  () =>
+    import('@/components/clients/ClientsMapPanel').then(
+      (m) => m.ClientsMapPanel,
+    ),
+  { ssr: false, loading: () => <div className="clients-map-skeleton" /> },
+);
 
 const PREVIEW_LIMIT = 500;
 
@@ -22,6 +39,7 @@ function buildFilterParams(
   stateFilter: string,
   dddFilter: string,
   search: string,
+  mapArea: MapAreaSelection | null,
 ) {
   const params = new URLSearchParams();
 
@@ -34,6 +52,12 @@ function buildFilterParams(
   if (tagFilters.intentionId) params.set('intentionId', tagFilters.intentionId);
   if (stateFilter) params.set('state', stateFilter);
   if (dddFilter) params.set('ddd', dddFilter);
+  if (tagFilters.nearCity && tagFilters.nearState && tagFilters.radiusKm) {
+    params.set('nearCity', tagFilters.nearCity);
+    params.set('nearState', tagFilters.nearState);
+    params.set('radiusKm', tagFilters.radiusKm);
+  }
+  appendMapAreaToParams(params, mapArea);
 
   return params;
 }
@@ -46,12 +70,17 @@ export default function ClientExportPage() {
   const [dddFilter, setDddFilter] = useState('');
   const [debouncedDdd, setDebouncedDdd] = useState('');
   const [filtersOpen, setFiltersOpen] = useState(true);
+  const [mapOpen, setMapOpen] = useState(false);
+  const [mapArea, setMapArea] = useState<MapAreaSelection | null>(null);
+  const [mapSelectedCount, setMapSelectedCount] = useState(0);
 
   const [intentions, setIntentions] = useState<TenantIntention[]>([]);
   const [clients, setClients] = useState<Client[]>([]);
   const [total, setTotal] = useState(0);
   const [loading, setLoading] = useState(true);
   const [exporting, setExporting] = useState(false);
+  const [exportDialogOpen, setExportDialogOpen] = useState(false);
+  const [historyRefreshKey, setHistoryRefreshKey] = useState(0);
   const [error, setError] = useState('');
 
   useEffect(() => {
@@ -73,8 +102,14 @@ export default function ClientExportPage() {
 
   const filterParams = useMemo(
     () =>
-      buildFilterParams(tagFilters, stateFilter, debouncedDdd, debouncedSearch),
-    [tagFilters, stateFilter, debouncedDdd, debouncedSearch],
+      buildFilterParams(
+        tagFilters,
+        stateFilter,
+        debouncedDdd,
+        debouncedSearch,
+        mapArea,
+      ),
+    [tagFilters, stateFilter, debouncedDdd, debouncedSearch, mapArea],
   );
 
   const load = useCallback(async () => {
@@ -115,6 +150,7 @@ export default function ClientExportPage() {
     Boolean(debouncedSearch) ||
     Boolean(stateFilter) ||
     Boolean(debouncedDdd) ||
+    Boolean(mapArea) ||
     countActiveFilters(tagFilters) > 0;
 
   function clearFilters() {
@@ -122,40 +158,23 @@ export default function ClientExportPage() {
     setTagFilters(emptyTagFilters());
     setStateFilter('');
     setDddFilter('');
+    setMapArea(null);
   }
 
-  async function handleExport() {
-    setExporting(true);
+  async function handleExportConfirm(purposePayload: ClientExportRequest) {
     setError('');
 
-    try {
-      const query = filterParams.toString();
-      const res = await fetch(`/api/clients/export${query ? `?${query}` : ''}`);
+    const result = await exportClientsWithPurpose({
+      ...purposePayload,
+      filters: filtersFromSearchParams(filterParams),
+    });
 
-      if (!res.ok) {
-        const data = await res.json().catch(() => ({}));
-        setError(
-          (data as { message?: string }).message ?? 'Erro ao exportar arquivo',
-        );
-        return;
-      }
-
-      const blob = await res.blob();
-      const disposition = res.headers.get('content-disposition') ?? '';
-      const match = disposition.match(/filename="?([^"]+)"?/i);
-      const filename = match?.[1] ?? 'contatos.xlsx';
-
-      const url = URL.createObjectURL(blob);
-      const anchor = document.createElement('a');
-      anchor.href = url;
-      anchor.download = filename;
-      anchor.click();
-      URL.revokeObjectURL(url);
-    } catch {
-      setError('Erro ao exportar arquivo');
-    } finally {
-      setExporting(false);
+    if (!result.ok) {
+      setError(result.error);
+      throw new Error(result.error);
     }
+
+    setHistoryRefreshKey((value) => value + 1);
   }
 
   const previewTruncated = total > clients.length;
@@ -164,8 +183,9 @@ export default function ClientExportPage() {
     <AppShell title="Exportar clientes">
       <div className="export-page">
         <p className="export-page-intro">
-          Filtre os clientes, confira a pré-visualização em tabela e exporte um
-          arquivo Excel no formato do modelo de contatos.
+          Filtre os clientes por etiquetas, localização ou área no mapa. Antes de
+          baixar o Excel, registre a finalidade da exportação para rastrear para
+          onde foram os dados.
         </p>
 
         <div className="export-toolbar card">
@@ -191,7 +211,7 @@ export default function ClientExportPage() {
               <button
                 type="button"
                 className="primary"
-                onClick={() => void handleExport()}
+                onClick={() => setExportDialogOpen(true)}
                 disabled={exporting || loading || total === 0}
               >
                 {exporting ? 'Exportando…' : 'Exportar Excel'}
@@ -254,6 +274,50 @@ export default function ClientExportPage() {
           )}
         </div>
 
+        <div className="export-map-section card">
+          <div className="export-map-header">
+            <div>
+              <h2 className="export-map-title">Mapa e seleção por região</h2>
+              <p className="export-map-subtitle">
+                Desenhe um retângulo ou círculo para filtrar e exportar apenas
+                os clientes daquela área.
+              </p>
+            </div>
+            <div className="export-map-header-actions">
+              {mapArea && (
+                <span className="clients-map-legend-selected">
+                  {mapSelectedCount} na região
+                </span>
+              )}
+              <button
+                type="button"
+                className="ghost"
+                onClick={() => setMapOpen((open) => !open)}
+              >
+                {mapOpen ? 'Ocultar mapa' : 'Mostrar mapa'}
+              </button>
+              {mapArea && (
+                <button
+                  type="button"
+                  className="ghost"
+                  onClick={() => setMapArea(null)}
+                >
+                  Limpar área
+                </button>
+              )}
+            </div>
+          </div>
+
+          {mapOpen && (
+            <ClientsMapPanel
+              selectedArea={mapArea}
+              onAreaChange={setMapArea}
+              onSelectedCountChange={setMapSelectedCount}
+              showLegend={false}
+            />
+          )}
+        </div>
+
         <ClientListSummary
           total={total}
           clients={clients}
@@ -277,7 +341,25 @@ export default function ClientExportPage() {
         <div className="card export-preview-card">
           <ClientExportPreviewTable clients={clients} loading={loading} />
         </div>
+
+        <ClientExportHistory refreshKey={historyRefreshKey} />
       </div>
+
+      <ClientExportDialog
+        open={exportDialogOpen}
+        clientCount={total}
+        onClose={() => {
+          if (!exporting) setExportDialogOpen(false);
+        }}
+        onConfirm={async (payload) => {
+          setExporting(true);
+          try {
+            await handleExportConfirm(payload);
+          } finally {
+            setExporting(false);
+          }
+        }}
+      />
     </AppShell>
   );
 }
