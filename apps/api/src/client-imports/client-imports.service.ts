@@ -34,6 +34,50 @@ function formatImportCommitValidationError(error: {
   return `${parts.join(' ')}: ${issue.message}`;
 }
 
+function sanitizeCommitRowPhones(row: Record<string, unknown>): Record<string, unknown> {
+  const phone = normalizePhone(
+    typeof row.phone === 'string' ? row.phone : null,
+  );
+  const property =
+    row.property && typeof row.property === 'object'
+      ? (row.property as Record<string, unknown>)
+      : null;
+  const additionalProperties = Array.isArray(row.additionalProperties)
+    ? row.additionalProperties
+    : null;
+
+  return {
+    ...row,
+    phone,
+    ...(property
+      ? {
+          property: {
+            ...property,
+            phone:
+              normalizePhone(
+                typeof property.phone === 'string' ? property.phone : null,
+              ) ?? undefined,
+          },
+        }
+      : {}),
+    ...(additionalProperties
+      ? {
+          additionalProperties: additionalProperties.map((p) => {
+            if (!p || typeof p !== 'object') return p;
+            const prop = p as Record<string, unknown>;
+            return {
+              ...prop,
+              phone:
+                normalizePhone(
+                  typeof prop.phone === 'string' ? prop.phone : null,
+                ) ?? undefined,
+            };
+          }),
+        }
+      : {}),
+  };
+}
+
 function sanitizeCommitPayload(body: unknown): unknown {
   if (!body || typeof body !== 'object') return body;
   const payload = body as { rows?: unknown[] };
@@ -42,11 +86,13 @@ function sanitizeCommitPayload(body: unknown): unknown {
     ...payload,
     rows: payload.rows.map((row) => {
       if (!row || typeof row !== 'object') return row;
-      const r = row as { email?: string | null };
-      return {
+      const r = row as Record<string, unknown>;
+      return sanitizeCommitRowPhones({
         ...r,
-        email: sanitizeImportEmail(r.email),
-      };
+        email: sanitizeImportEmail(
+          typeof r.email === 'string' ? r.email : null,
+        ),
+      });
     }),
   };
 }

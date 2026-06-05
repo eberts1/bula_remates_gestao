@@ -1,6 +1,6 @@
 import * as XLSX from 'xlsx';
 import type { LivestockCategory } from '@docs/shared';
-import { normalizePhone } from './phone.util';
+import { normalizePhone, splitPhonesFromCell } from './phone.util';
 import type { ParsedImportRow } from './import-parser.types';
 
 const COLUMN_ALIASES: Record<string, string[]> = {
@@ -90,20 +90,42 @@ export function parseSpreadsheet(
     if (!cell(row, mapping.farmName)) warnings.push('Fazenda não informada');
     if (!cell(row, mapping.city)) warnings.push('Cidade não informada');
 
+    const phonesFromPrimary = splitPhonesFromCell(cell(row, mapping.phone));
+    const phone2FromColumn = normalizePhone(cell(row, mapping.phone2));
+    const extraPhones = [
+      ...phonesFromPrimary.slice(2),
+      ...(phone2FromColumn &&
+      phone2FromColumn !== phonesFromPrimary[1] &&
+      phone2FromColumn !== phonesFromPrimary[0]
+        ? [phone2FromColumn]
+        : []),
+    ];
+    const baseNotes = cell(row, mapping.notes);
+    const notes =
+      extraPhones.length > 0
+        ? [baseNotes, `Outros telefones: ${extraPhones.join(', ')}`]
+            .filter(Boolean)
+            .join('\n')
+        : baseNotes || null;
+
     rows.push({
       rowIndex: i - 1,
       name,
       document: cell(row, mapping.document) || null,
       email: cell(row, mapping.email) || null,
-      phone: normalizePhone(cell(row, mapping.phone)),
-      notes: cell(row, mapping.notes) || null,
+      phone: phonesFromPrimary[0] ?? null,
+      notes,
       legacyCode: null,
       groupKey: null,
       property: {
         farmName: cell(row, mapping.farmName) || '—',
         city: cell(row, mapping.city) || '—',
         state,
-        phone: normalizePhone(cell(row, mapping.phone2)) ?? undefined,
+        phone:
+          phonesFromPrimary[1] ??
+          (phone2FromColumn && phone2FromColumn !== phonesFromPrimary[0]
+            ? phone2FromColumn
+            : undefined),
       },
       warnings,
       needsReview: warnings.length > 0,
