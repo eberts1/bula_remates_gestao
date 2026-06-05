@@ -6,14 +6,38 @@ import {
 import { DocumentStatus, Prisma } from '@prisma/client';
 import { JwtPayload } from '../auth/auth.types';
 import { PrismaService } from '../prisma/prisma.service';
+import * as XLSX from 'xlsx';
 import {
   buildClientTextSearchConditions,
   buildDigitSearchSql,
+  digitsOnly,
 } from './client-search.util';
 import { CreateClientDto } from './dto/create-client.dto';
 import { ClientPropertyDto } from './dto/client-property.dto';
 import { UpdateClientDto } from './dto/update-client.dto';
 import { MergeClientsDto } from './dto/merge-clients.dto';
+import { ensureBrazilMobileNinthDigit } from '@docs/shared';
+
+export interface ClientListFilters {
+  animalType?: string;
+  animalSex?: string;
+  livestockCategory?: string;
+  intentionId?: string;
+  state?: string;
+  ddd?: string;
+}
+
+const EXPORT_HEADERS = [
+  'nome',
+  'telefone',
+  'email',
+  'documento',
+  'observacao',
+  'status',
+  'tipo_interesse',
+  'sexo_interesse',
+  'categoria_interesse',
+] as const;
 
 const clientInclude = {
   responsible: { select: { id: true, name: true } },
@@ -41,34 +65,10 @@ export class ClientsService {
     q?: string,
     page = 1,
     limit = 20,
-    filters?: {
-      animalType?: string;
-      animalSex?: string;
-      livestockCategory?: string;
-      intentionId?: string;
-    },
+    filters?: ClientListFilters,
   ) {
     const skip = (page - 1) * limit;
-    const searchWhere = q
-      ? await this.buildSearchWhere(user.tenantId, q)
-      : {};
-    const where: Prisma.ClientWhereInput = {
-      tenantId: user.tenantId,
-      deletedAt: null,
-      ...(filters?.animalType ? { animalType: filters.animalType } : {}),
-      ...(filters?.animalSex ? { animalSex: filters.animalSex } : {}),
-      ...(filters?.livestockCategory
-        ? { livestockCategory: filters.livestockCategory }
-        : {}),
-      ...(filters?.intentionId
-        ? {
-            intentions: {
-              some: { intentionId: filters.intentionId },
-            },
-          }
-        : {}),
-      ...searchWhere,
-    };
+    const where = await this.buildListWhere(user.tenantId, q, filters);
 
     const [items, total] = await Promise.all([
       this.prisma.client.findMany({
@@ -88,6 +88,87 @@ export class ClientsService {
       limit,
       totalPages: Math.ceil(total / limit),
     };
+  }
+
+  async exportXlsx(user: JwtPayload, q?: string, filters?: ClientListFilters) {
+    const where = await this.buildListWhere(user.tenantId, q, filters);
+    const clients = await this.prisma.client.findMany({
+      where,
+      orderBy: { name: 'asc' },
+      include: clientInclude,
+    });
+
+    const rows = clients.map((client) => {
+      const serialized = this.serializeClient(client);
+      return [
+        serialized.name,
+        ensureBrazilMobileNinthDigit(serialized.phone),
+        serialized.email ?? '',
+        serialized.document ?? '',
+        serialized.notes ?? '',
+        serialized.active ? 'ativo' : 'inativo',
+        serialized.animalType ?? '',
+        serialized.animalSex ?? '',
+        serialized.livestockCategory ?? '',
+      ];
+    });
+
+    const sheet = XLSX.utils.aoa_to_sheet([[...EXPORT_HEADERS], ...rows]);
+    const workbook = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(workbook, sheet, 'Contatos');
+    return XLSX.write(workbook, { type: 'buffer', bookType: 'xlsx' }) as Buffer;
+  }
+
+  private async buildListWhere(
+    tenantId: string,
+    q?: string,
+    filters?: ClientListFilters,
+  ): Promise<Prisma.ClientWhereInput> {
+    const searchWhere = q ? await this.buildSearchWhere(tenantId, q) : {};
+    const stateFilter = filters?.state?.trim().toUpperCase();
+    const dddFilter = digitsOnly(filters?.ddd ?? '').slice(0, 2);
+    const dddWhere =
+      dddFilter.length === 2
+        ? await this.buildDddWhere(tenantId, dddFilter)
+        : {};
+
+    return {
+      tenantId,
+      deletedAt: null,
+      ...(filters?.animalType ? { animalType: filters.animalType } : {}),
+      ...(filters?.animalSex ? { animalSex: filters.animalSex } : {}),
+      ...(filters?.livestockCategory
+        ? { livestockCategory: filters.livestockCategory }
+        : {}),
+      ...(filters?.intentionId
+        ? {
+            intentions: {
+              some: { intentionId: filters.intentionId },
+            },
+          }
+        : {}),
+      ...(stateFilter
+        ? {
+            properties: {
+              some: { state: { equals: stateFilter } },
+            },
+          }
+        : {}),
+      ...searchWhere,
+      ...dddWhere,
+    };
+  }
+
+  private async buildDddWhere(
+    tenantId: string,
+    ddd: string,
+  ): Promise<Prisma.ClientWhereInput> {
+    const digitSql = buildDigitSearchSql(tenantId, ddd);
+    if (!digitSql) return { id: { in: [] } };
+
+    const rows = await this.prisma.$queryRaw<{ id: string }[]>(digitSql.sql);
+    const ids = rows.map((r) => r.id);
+    return ids.length > 0 ? { id: { in: ids } } : { id: { in: [] } };
   }
 
   private async buildSearchWhere(

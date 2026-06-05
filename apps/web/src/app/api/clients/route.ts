@@ -34,6 +34,10 @@ export async function GET(req: NextRequest) {
 
   const intentionId = searchParams.get('intentionId');
 
+  const state = searchParams.get('state');
+
+  const ddd = searchParams.get('ddd');
+
   const query = new URLSearchParams({ page, limit });
 
   if (q) query.set('q', q);
@@ -45,6 +49,10 @@ export async function GET(req: NextRequest) {
   if (livestockCategory) query.set('livestockCategory', livestockCategory);
 
   if (intentionId) query.set('intentionId', intentionId);
+
+  if (state) query.set('state', state);
+
+  if (ddd) query.set('ddd', ddd);
 
 
 

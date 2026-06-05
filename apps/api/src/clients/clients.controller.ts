@@ -18,9 +18,13 @@ import {
 
   Query,
 
+  Res,
+
   UseGuards,
 
 } from '@nestjs/common';
+
+import type { Response } from 'express';
 
 import { TenantRole } from '@prisma/client';
 
@@ -71,6 +75,10 @@ export class ClientsController {
 
     @Query('intentionId') intentionId?: string,
 
+    @Query('state') state?: string,
+
+    @Query('ddd') ddd?: string,
+
   ) {
 
     return this.clientsService.list(
@@ -83,9 +91,71 @@ export class ClientsController {
 
       limit ? Number(limit) : 20,
 
-      { animalType, animalSex, livestockCategory, intentionId },
+      { animalType, animalSex, livestockCategory, intentionId, state, ddd },
 
     );
+
+  }
+
+
+
+  @Get('export')
+
+  async export(
+
+    @CurrentUser() user: JwtPayload,
+
+    @Res() res: Response,
+
+    @Query('q') q?: string,
+
+    @Query('animalType') animalType?: string,
+
+    @Query('animalSex') animalSex?: string,
+
+    @Query('livestockCategory') livestockCategory?: string,
+
+    @Query('intentionId') intentionId?: string,
+
+    @Query('state') state?: string,
+
+    @Query('ddd') ddd?: string,
+
+  ) {
+
+    const buffer = await this.clientsService.exportXlsx(user, q, {
+
+      animalType,
+
+      animalSex,
+
+      livestockCategory,
+
+      intentionId,
+
+      state,
+
+      ddd,
+
+    });
+
+    res.setHeader(
+
+      'Content-Type',
+
+      'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+
+    );
+
+    res.setHeader(
+
+      'Content-Disposition',
+
+      'attachment; filename="contatos.xlsx"',
+
+    );
+
+    res.send(buffer);
 
   }
 
