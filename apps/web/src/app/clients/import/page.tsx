@@ -25,7 +25,7 @@ import {
 } from '@/types/client-import';
 import type { LivestockCategory } from '@docs/shared';
 import { fetchAuthed, refreshSession } from '@/lib/client-auth';
-import { parseImportFileDirect } from '@/lib/client-import-parse';
+import { commitImportDirect, parseImportFileDirect } from '@/lib/client-api-direct';
 import {
   clearImportResume,
   loadImportResume,
@@ -34,7 +34,8 @@ import {
   type ImportResumeState,
 } from '@/lib/import-resume';
 
-const COMMIT_CHUNK = 40;
+/** Alinhado ao chunk interno da API (25) — lotes menores evitam timeout. */
+const COMMIT_CHUNK = 25;
 
 const emptyBatchTags = (): BatchTags => ({
   animalType: '',
@@ -280,30 +281,18 @@ export default function ClientImportPage() {
         await refreshSession();
 
         const chunk = payloadRows.slice(i, i + COMMIT_CHUNK);
-        const res = await fetchAuthed('/api/clients/import/commit', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            fileName: meta.fileName,
-            mimeType: meta.mimeType,
-            sourceType: meta.sourceType,
-            rows: chunk,
-          }),
-          signal: abort.signal,
-        });
-
-        let data: CommitImportResult & { message?: string } = {
-          importedCount: 0,
-          updatedCount: 0,
-          skippedCount: 0,
-        };
+        let data: CommitImportResult;
         try {
-          const text = await res.text();
-          if (text.trim()) data = JSON.parse(text) as typeof data;
-        } catch {
-          /* resposta não-JSON */
-        }
-        if (!res.ok) {
+          data = await commitImportDirect(
+            {
+              fileName: meta.fileName,
+              mimeType: meta.mimeType,
+              sourceType: meta.sourceType,
+              rows: chunk,
+            },
+            abort.signal,
+          );
+        } catch (e) {
           const savedSoFar = totals.importedCount + totals.updatedCount;
           saveImportResume({
             fileMeta: meta,
@@ -312,7 +301,8 @@ export default function ClientImportPage() {
             totals,
             updatedAt: Date.now(),
           });
-          if (res.status === 401) {
+          const msg = e instanceof Error ? e.message : 'Falha ao importar';
+          if (msg.includes('Não autenticado')) {
             throw new Error(
               savedSoFar > 0
                 ? `Sessão expirada após ${savedSoFar} cliente(s) salvos. Faça login e clique em "Continuar importação" — os já salvos não serão duplicados.`
@@ -320,8 +310,9 @@ export default function ClientImportPage() {
             );
           }
           throw new Error(
-            data.message ??
-              `Falha ao salvar (lote ${Math.floor(i / COMMIT_CHUNK) + 1})`,
+            msg.includes('Continuar importação')
+              ? msg
+              : `${msg} (lote ${Math.floor(i / COMMIT_CHUNK) + 1})`,
           );
         }
 
@@ -354,10 +345,8 @@ export default function ClientImportPage() {
 
       if (payloadRows.length > COMMIT_CHUNK) {
         await refreshSession();
-        await fetchAuthed('/api/clients/import/commit', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
+        await commitImportDirect(
+          {
             fileName: meta.fileName,
             mimeType: meta.mimeType,
             sourceType: meta.sourceType,
@@ -368,9 +357,9 @@ export default function ClientImportPage() {
               updatedCount: totals.updatedCount,
               skippedCount: totals.skippedCount,
             },
-          }),
-          signal: abort.signal,
-        });
+          },
+          abort.signal,
+        );
       }
 
       clearImportResume();
