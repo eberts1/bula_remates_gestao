@@ -1,11 +1,15 @@
 import { cookies } from 'next/headers';
 import { NextResponse } from 'next/server';
 import { backendErrorMessage, fetchBackend } from '@/lib/api';
-import { setAccessToken } from '@/lib/auth';
+import {
+  applyAccessTokenCookie,
+  applyRefreshTokenCookie,
+  REFRESH_COOKIE,
+} from '@/lib/auth';
 
 export async function POST() {
   const store = await cookies();
-  const refreshToken = store.get('refresh_token')?.value;
+  const refreshToken = store.get(REFRESH_COOKIE)?.value;
   if (!refreshToken) {
     return NextResponse.json({ message: 'Sem sessão ativa' }, { status: 401 });
   }
@@ -31,18 +35,12 @@ export async function POST() {
       );
     }
 
-    await setAccessToken(accessToken);
-
     const response = NextResponse.json({ ok: true });
+    applyAccessTokenCookie(response, accessToken);
+
     const newRefresh = data.refreshToken;
     if (typeof newRefresh === 'string' && newRefresh) {
-      response.cookies.set('refresh_token', newRefresh, {
-        httpOnly: true,
-        secure: process.env.NODE_ENV === 'production',
-        sameSite: 'lax',
-        path: '/',
-        maxAge: 7 * 24 * 60 * 60,
-      });
+      applyRefreshTokenCookie(response, newRefresh);
     }
     return response;
   } catch (e) {

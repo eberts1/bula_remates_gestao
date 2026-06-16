@@ -1,3 +1,5 @@
+import { refreshSession } from '@/lib/client-auth';
+
 export class FetchJsonError extends Error {
   constructor(
     message: string,
@@ -8,11 +10,25 @@ export class FetchJsonError extends Error {
   }
 }
 
+async function fetchWithSession(
+  url: string,
+  init?: RequestInit,
+): Promise<Response> {
+  let res = await fetch(url, { ...init, credentials: 'include' });
+  if (res.status === 401) {
+    const refreshed = await refreshSession();
+    if (refreshed) {
+      res = await fetch(url, { ...init, credentials: 'include' });
+    }
+  }
+  return res;
+}
+
 export async function fetchJson<T>(
   url: string,
   init?: RequestInit,
 ): Promise<T> {
-  const res = await fetch(url, init);
+  const res = await fetchWithSession(url, init);
   const data = await res.json();
 
   if (!res.ok) {

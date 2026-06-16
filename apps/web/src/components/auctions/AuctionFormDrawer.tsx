@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react';
 import { AuctionForm } from '@/components/auctions/AuctionForm';
 import { useTenantIntentions } from '@/hooks/use-tenant-intentions';
 import type { AuctionDetail } from '@/types/auction';
+import { fetchAuthed } from '@/lib/client-auth';
 import {
   auctionToFormValue,
   emptyAuctionForm,
@@ -82,7 +83,7 @@ export function AuctionFormDrawer({
     try {
       const url = auction ? `/api/auctions/${auction.id}` : '/api/auctions';
       const method = auction ? 'PATCH' : 'POST';
-      const res = await fetch(url, {
+      const res = await fetchAuthed(url, {
         method,
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(body),

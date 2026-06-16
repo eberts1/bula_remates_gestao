@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { backendErrorMessage, fetchBackend } from '@/lib/api';
-import { setAccessToken } from '@/lib/auth';
+import { applyAccessTokenCookie, applyRefreshTokenCookie } from '@/lib/auth';
 
 export async function POST(req: NextRequest) {
   try {
@@ -26,21 +26,15 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    await setAccessToken(accessToken);
-
     const response = NextResponse.json({
       user: data.user,
       tenant: data.tenant,
     });
 
+    applyAccessTokenCookie(response, accessToken);
+
     if (typeof data.refreshToken === 'string' && data.refreshToken) {
-      response.cookies.set('refresh_token', data.refreshToken, {
-        httpOnly: true,
-        secure: process.env.NODE_ENV === 'production',
-        sameSite: 'lax',
-        path: '/',
-        maxAge: 7 * 24 * 60 * 60,
-      });
+      applyRefreshTokenCookie(response, data.refreshToken);
     }
 
     return response;
