@@ -29,7 +29,8 @@ export interface AuctionImportColumnMapping {
 }
 
 const COLUMN_ALIASES: Record<keyof AuctionImportColumnMapping, string[]> = {
-  date: ['mes', 'mês', 'dia', 'data', 'mes/dia', 'mês/dia'],
+  // Não usar "dia" isolado — conflita com a coluna "DIA DA SEMANA".
+  date: ['mes', 'mês', 'data', 'mes/dia', 'mês/dia'],
   dayOfWeek: ['dia da semana', 'dia semana'],
   name: ['leilao', 'leilão', 'nome', 'evento'],
   time: ['hora', 'horario', 'horário'],
@@ -78,6 +79,19 @@ function cell(row: unknown[], index?: number): string {
   const v = row[index];
   if (v == null) return '';
   return String(v).trim();
+}
+
+function isCsvFileName(fileName: string): boolean {
+  return fileName.toLowerCase().endsWith('.csv');
+}
+
+function readSpreadsheetWorkbook(buffer: Buffer, fileName: string) {
+  if (isCsvFileName(fileName)) {
+    const text = buffer.toString('utf8');
+    return XLSX.read(text, { type: 'string', raw: true, cellDates: false });
+  }
+
+  return XLSX.read(buffer, { type: 'buffer' });
 }
 
 function isDateCell(value: string): boolean {
@@ -206,12 +220,13 @@ export function parseAuctionSpreadsheet(
     columnMapping: AuctionImportColumnMapping;
   };
 } {
-  const workbook = XLSX.read(buffer, { type: 'buffer' });
+  const csvSource = isCsvFileName(fileName);
+  const workbook = readSpreadsheetWorkbook(buffer, fileName);
   const sheet = workbook.Sheets[workbook.SheetNames[0]];
   const data = XLSX.utils.sheet_to_json<unknown[]>(sheet, {
     header: 1,
     defval: '',
-    raw: false,
+    raw: csvSource,
   }) as unknown[][];
 
   if (data.length < 2) {
