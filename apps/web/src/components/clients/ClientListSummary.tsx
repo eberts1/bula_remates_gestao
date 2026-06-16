@@ -1,10 +1,10 @@
 'use client';
 
-import type { Client } from '@/types/client';
+import type { ClientListItem } from '@/types/client';
 
 interface Props {
   total: number;
-  clients: Client[];
+  clients: ClientListItem[];
   page: number;
   limit: number;
   totalPages: number;

@@ -78,6 +78,7 @@ export class PublicClientFormsService {
         const created = await tx.client.create({
           data: {
             tenantId: token.tenantId,
+            ownerId: token.createdById,
             name: dto.name,
             document: dto.document.trim(),
             email: dto.email || null,

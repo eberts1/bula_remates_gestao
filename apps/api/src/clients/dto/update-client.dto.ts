@@ -52,6 +52,10 @@ export class UpdateClientDto {
   responsibleId?: string | null;
 
   @IsOptional()
+  @IsUUID()
+  ownerId?: string | null;
+
+  @IsOptional()
   @IsArray()
   @ValidateNested({ each: true })
   @Type(() => ClientPropertyDto)

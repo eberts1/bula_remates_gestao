@@ -13,6 +13,8 @@ const PROTECTED_PREFIXES = [
   '/collaborators',
   '/documents',
   '/admin',
+  '/attendance',
+  '/auctions',
 ];
 
 
@@ -86,6 +88,14 @@ export const config = {
     '/clients/:path*',
 
     '/collaborators/:path*',
+
+    '/attendance',
+
+    '/attendance/:path*',
+
+    '/auctions',
+
+    '/auctions/:path*',
 
     '/admin',
 

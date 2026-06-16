@@ -1,107 +1,129 @@
 'use client';
 
+import { useQueryClient } from '@tanstack/react-query';
 import Link from 'next/link';
-import { useState } from 'react';
-import type { Client } from '@/types/client';
+import { useCallback, useState } from 'react';
+import { fetchJson } from '@/lib/query/fetch-json';
+import { queryKeys } from '@/lib/query/query-keys';
+import type { Client, ClientListItem } from '@/types/client';
 
 interface Props {
-  clients: Client[];
+  clients: ClientListItem[];
   loading: boolean;
-  onEdit: (client: Client) => void;
+  onEdit: (client: ClientListItem) => void;
   onNewClient: () => void;
 }
 
 function ClientCard({
-  client,
+  item,
   expanded,
+  details,
+  detailsLoading,
   onToggleExpand,
   onEdit,
 }: {
-  client: Client;
+  item: ClientListItem;
   expanded: boolean;
+  details: Client | null;
+  detailsLoading: boolean;
   onToggleExpand: () => void;
   onEdit: () => void;
 }) {
+  const display = details ?? null;
+
   return (
     <article className={`client-card${expanded ? ' client-card--expanded' : ''}`}>
       <div className="client-card-header">
-        <h3 className="client-card-name">{client.name}</h3>
+        <h3 className="client-card-name">{item.name}</h3>
         <div className="client-card-badges">
-          {!client.isComplete && (
+          {!item.isComplete && (
             <span className="badge badge-incomplete">Incompleto</span>
           )}
-          <span className={`badge ${client.active ? 'badge-active' : 'badge-inactive'}`}>
-            {client.active ? 'Ativo' : 'Inativo'}
+          <span className={`badge ${item.active ? 'badge-active' : 'badge-inactive'}`}>
+            {item.active ? 'Ativo' : 'Inativo'}
           </span>
         </div>
       </div>
 
       <p className="client-card-meta">
-        {client.document || 'Sem CPF/CNPJ'}
-        {client.phone ? ` · ${client.phone}` : ''}
+        {item.document || 'Sem CPF/CNPJ'}
+        {item.phone ? ` · ${item.phone}` : ''}
       </p>
 
-      {(client.livestockCategory || client.animalType || client.animalSex) && (
+      {(item.livestockCategory || item.animalType || item.animalSex) && (
         <div className="client-card-tags">
-          {client.livestockCategory && (
-            <span className="badge-tag">{client.livestockCategory}</span>
+          {item.livestockCategory && (
+            <span className="badge-tag">{item.livestockCategory}</span>
           )}
-          {client.animalType && <span className="badge-tag">{client.animalType}</span>}
-          {client.animalSex && <span className="badge-tag">{client.animalSex}</span>}
+          {item.animalType && <span className="badge-tag">{item.animalType}</span>}
+          {item.animalSex && <span className="badge-tag">{item.animalSex}</span>}
         </div>
       )}
 
       <p className="client-card-docs">
-        {client.documentCount} documento{client.documentCount !== 1 ? 's' : ''}
+        {item.documentCount} documento{item.documentCount !== 1 ? 's' : ''}
+        {item.propertyCount > 0
+          ? ` · ${item.propertyCount} propriedade${item.propertyCount !== 1 ? 's' : ''}`
+          : ''}
       </p>
 
       {expanded && (
         <div className="client-card-details">
-          <dl className="client-card-detail-list">
-            <div>
-              <dt>E-mail</dt>
-              <dd>{client.email?.trim() || '—'}</dd>
-            </div>
-            <div>
-              <dt>Endereço</dt>
-              <dd>{client.addressFull?.trim() || '—'}</dd>
-            </div>
-            <div>
-              <dt>Responsável</dt>
-              <dd>{client.responsible?.name || '—'}</dd>
-            </div>
-            {client.intentions.length > 0 && (
-              <div>
-                <dt>Intenções</dt>
-                <dd>{client.intentions.map((i) => i.label).join(', ')}</dd>
-              </div>
-            )}
-            {client.intentionNotes && (
-              <div>
-                <dt>Obs. intenção</dt>
-                <dd>{client.intentionNotes}</dd>
-              </div>
-            )}
-          </dl>
+          {detailsLoading && <p className="client-card-loading">Carregando detalhes…</p>}
 
-          {client.properties.length > 0 && (
-            <div className="client-card-properties">
-              <p className="client-card-properties-title">Propriedades</p>
-              {client.properties.map((property, index) => (
-                <p key={property.id ?? index} className="client-card-property-item">
-                  {property.farmName || `Propriedade ${index + 1}`}
-                  {property.city || property.state
-                    ? ` — ${[property.city, property.state].filter(Boolean).join('/')}`
-                    : ''}
+          {!detailsLoading && display && (
+            <>
+              <dl className="client-card-detail-list">
+                <div>
+                  <dt>E-mail</dt>
+                  <dd>{display.email?.trim() || '—'}</dd>
+                </div>
+                <div>
+                  <dt>Endereço</dt>
+                  <dd>{display.addressFull?.trim() || '—'}</dd>
+                </div>
+                <div>
+                  <dt>Responsável</dt>
+                  <dd>{display.responsible?.name || '—'}</dd>
+                </div>
+                {display.intentions.length > 0 && (
+                  <div>
+                    <dt>Intenções</dt>
+                    <dd>{display.intentions.map((i) => i.label).join(', ')}</dd>
+                  </div>
+                )}
+                {display.intentionNotes && (
+                  <div>
+                    <dt>Obs. intenção</dt>
+                    <dd>{display.intentionNotes}</dd>
+                  </div>
+                )}
+              </dl>
+
+              {display.properties.length > 0 && (
+                <div className="client-card-properties">
+                  <p className="client-card-properties-title">Propriedades</p>
+                  {display.properties.map((property, index) => (
+                    <p key={property.id ?? index} className="client-card-property-item">
+                      {property.farmName || `Propriedade ${index + 1}`}
+                      {property.city || property.state
+                        ? ` — ${[property.city, property.state].filter(Boolean).join('/')}`
+                        : ''}
+                    </p>
+                  ))}
+                </div>
+              )}
+
+              {display.notes && (
+                <p className="client-card-notes">
+                  <strong>Obs.:</strong> {display.notes}
                 </p>
-              ))}
-            </div>
+              )}
+            </>
           )}
 
-          {client.notes && (
-            <p className="client-card-notes">
-              <strong>Obs.:</strong> {client.notes}
-            </p>
+          {!detailsLoading && !display && (
+            <p className="client-card-loading">Não foi possível carregar os detalhes.</p>
           )}
         </div>
       )}
@@ -114,7 +136,7 @@ function ClientCard({
           Editar
         </button>
         <Link
-          href={`/clients/${client.id}`}
+          href={`/clients/${item.id}`}
           className="ghost client-card-link"
           onClick={(e) => e.stopPropagation()}
         >
@@ -136,7 +158,42 @@ function ClientCardSkeleton() {
 }
 
 export function ClientGallery({ clients, loading, onEdit, onNewClient }: Props) {
+  const queryClient = useQueryClient();
   const [expandedId, setExpandedId] = useState<string | null>(null);
+  const [detailsById, setDetailsById] = useState<Record<string, Client>>({});
+  const [loadingDetailsId, setLoadingDetailsId] = useState<string | null>(null);
+
+  const loadDetails = useCallback(
+    async (id: string) => {
+      setLoadingDetailsId(id);
+      try {
+        const client = await queryClient.fetchQuery({
+          queryKey: queryKeys.clients.detail(id),
+          queryFn: () => fetchJson<Client>(`/api/clients/${id}`),
+        });
+        setDetailsById((current) =>
+          current[id] ? current : { ...current, [id]: client },
+        );
+      } catch {
+        // mantém details null — card exibe mensagem de erro
+      } finally {
+        setLoadingDetailsId((current) => (current === id ? null : current));
+      }
+    },
+    [queryClient],
+  );
+
+  function handleToggleExpand(id: string) {
+    if (expandedId === id) {
+      setExpandedId(null);
+      return;
+    }
+
+    setExpandedId(id);
+    if (!detailsById[id]) {
+      void loadDetails(id);
+    }
+  }
 
   if (loading) {
     return (
@@ -164,11 +221,11 @@ export function ClientGallery({ clients, loading, onEdit, onNewClient }: Props) 
       {clients.map((client) => (
         <ClientCard
           key={client.id}
-          client={client}
+          item={client}
           expanded={expandedId === client.id}
-          onToggleExpand={() =>
-            setExpandedId((current) => (current === client.id ? null : client.id))
-          }
+          details={detailsById[client.id] ?? null}
+          detailsLoading={loadingDetailsId === client.id}
+          onToggleExpand={() => handleToggleExpand(client.id)}
           onEdit={() => onEdit(client)}
         />
       ))}

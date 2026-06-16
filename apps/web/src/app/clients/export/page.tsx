@@ -1,7 +1,7 @@
 'use client';
 
 import dynamic from 'next/dynamic';
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 
 import { AppShell } from '@/components/AppShell';
 import { BRAZIL_STATES } from '@/components/clients/CityUfField';
@@ -15,13 +15,14 @@ import {
   emptyTagFilters,
   type TagFilterValues,
 } from '@/components/clients/ClientTagFilters';
-import type { Client } from '@/types/client';
-import type { TenantIntention } from '@/types/client-import';
 import type { ClientExportRequest } from '@/types/client-export';
+import { useClientsList } from '@/hooks/use-clients-list';
+import { useTenantIntentions } from '@/hooks/use-tenant-intentions';
 import {
   exportClientsWithPurpose,
   filtersFromSearchParams,
 } from '@/lib/client-export';
+import { clientsListFiltersFromSearchParams } from '@/lib/query/clients-list-params';
 import { appendMapAreaToParams, type MapAreaSelection } from '@/types/map-area';
 
 const ClientsMapPanel = dynamic(
@@ -74,21 +75,11 @@ export default function ClientExportPage() {
   const [mapArea, setMapArea] = useState<MapAreaSelection | null>(null);
   const [mapSelectedCount, setMapSelectedCount] = useState(0);
 
-  const [intentions, setIntentions] = useState<TenantIntention[]>([]);
-  const [clients, setClients] = useState<Client[]>([]);
-  const [total, setTotal] = useState(0);
-  const [loading, setLoading] = useState(true);
+  const { data: intentions = [] } = useTenantIntentions();
   const [exporting, setExporting] = useState(false);
   const [exportDialogOpen, setExportDialogOpen] = useState(false);
   const [historyRefreshKey, setHistoryRefreshKey] = useState(0);
   const [error, setError] = useState('');
-
-  useEffect(() => {
-    fetch('/api/tenant-intentions')
-      .then((r) => r.json())
-      .then((data) => setIntentions(data.items ?? []))
-      .catch(() => {});
-  }, []);
 
   useEffect(() => {
     const timer = setTimeout(() => setDebouncedSearch(search), 300);
@@ -112,39 +103,33 @@ export default function ClientExportPage() {
     [tagFilters, stateFilter, debouncedDdd, debouncedSearch, mapArea],
   );
 
-  const load = useCallback(async () => {
-    setLoading(true);
-    setError('');
+  const listFilters = useMemo(
+    () =>
+      clientsListFiltersFromSearchParams(filterParams, {
+        page: 1,
+        limit: PREVIEW_LIMIT,
+      }),
+    [filterParams],
+  );
 
-    try {
-      const params = new URLSearchParams(filterParams);
-      params.set('page', '1');
-      params.set('limit', String(PREVIEW_LIMIT));
+  const {
+    data: clientsData,
+    isLoading,
+    isFetching,
+    isError,
+  } = useClientsList(listFilters);
 
-      const res = await fetch(`/api/clients?${params}`);
-      const data = await res.json();
-
-      if (!res.ok) {
-        setError(data.message ?? 'Erro ao carregar clientes');
-        setClients([]);
-        setTotal(0);
-        return;
-      }
-
-      setClients(data.items ?? []);
-      setTotal(data.total ?? 0);
-    } catch {
-      setError('Erro ao carregar clientes');
-      setClients([]);
-      setTotal(0);
-    } finally {
-      setLoading(false);
-    }
-  }, [filterParams]);
+  const clients = clientsData?.items ?? [];
+  const total = clientsData?.total ?? 0;
+  const loading = isLoading || (isFetching && clients.length === 0);
 
   useEffect(() => {
-    void load();
-  }, [load]);
+    if (isError) {
+      setError('Erro ao carregar clientes');
+    } else {
+      setError('');
+    }
+  }, [isError]);
 
   const hasActiveFilters =
     Boolean(debouncedSearch) ||

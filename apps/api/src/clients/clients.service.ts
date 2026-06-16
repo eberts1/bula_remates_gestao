@@ -24,6 +24,7 @@ import {
 import { GeoService } from '../geo/geo.service';
 import { AuditService } from '../audit/audit.service';
 import { ExportClientsDto } from './dto/export-clients.dto';
+import { clientOwnerScope } from '../common/client-owner-scope.util';
 
 export interface ClientListFilters {
   animalType?: string;
@@ -83,6 +84,29 @@ const clientInclude = {
   },
 };
 
+/** Includes mínimos para listagem (galeria, export preview). */
+const clientListInclude = {
+  properties: {
+    take: 1,
+    orderBy: { sortOrder: 'asc' as const },
+    select: {
+      id: true,
+      farmName: true,
+      city: true,
+      state: true,
+      phone: true,
+    },
+  },
+  _count: {
+    select: {
+      documents: {
+        where: { deletedAt: null, status: DocumentStatus.ready },
+      },
+      properties: true,
+    },
+  },
+};
+
 @Injectable()
 export class ClientsService {
   constructor(
@@ -97,9 +121,31 @@ export class ClientsService {
     page = 1,
     limit = 20,
     filters?: ClientListFilters,
+    view: 'summary' | 'full' = 'summary',
   ) {
     const skip = (page - 1) * limit;
-    const where = await this.buildListWhere(user.tenantId, q, filters);
+    const where = await this.buildListWhere(user, q, filters);
+
+    if (view === 'full') {
+      const [items, total] = await Promise.all([
+        this.prisma.client.findMany({
+          where,
+          orderBy: { name: 'asc' },
+          skip,
+          take: limit,
+          include: clientInclude,
+        }),
+        this.prisma.client.count({ where }),
+      ]);
+
+      return {
+        items: items.map((c) => this.serializeClient(c)),
+        total,
+        page,
+        limit,
+        totalPages: Math.ceil(total / limit),
+      };
+    }
 
     const [items, total] = await Promise.all([
       this.prisma.client.findMany({
@@ -107,13 +153,13 @@ export class ClientsService {
         orderBy: { name: 'asc' },
         skip,
         take: limit,
-        include: clientInclude,
+        include: clientListInclude,
       }),
       this.prisma.client.count({ where }),
     ]);
 
     return {
-      items: items.map((c) => this.serializeClient(c)),
+      items: items.map((c) => this.serializeClientListItem(c)),
       total,
       page,
       limit,
@@ -190,7 +236,10 @@ export class ClientsService {
 
   async listExportHistory(user: JwtPayload, page = 1, limit = 20) {
     const skip = (page - 1) * limit;
-    const where = { tenantId: user.tenantId };
+    const where = {
+      tenantId: user.tenantId,
+      ...(user.isSuperAdmin ? {} : { createdById: user.sub }),
+    };
 
     const [items, total] = await Promise.all([
       this.prisma.clientExportBatch.findMany({
@@ -230,21 +279,26 @@ export class ClientsService {
     const since = new Date();
     since.setDate(since.getDate() - 30);
 
+    const exportWhere = {
+      tenantId: user.tenantId,
+      ...(user.isSuperAdmin ? {} : { createdById: user.sub }),
+    };
+
     const [totals, byPurpose, recentCount] = await Promise.all([
       this.prisma.clientExportBatch.aggregate({
-        where: { tenantId: user.tenantId },
+        where: exportWhere,
         _count: { _all: true },
         _sum: { clientCount: true },
       }),
       this.prisma.clientExportBatch.groupBy({
         by: ['purpose'],
-        where: { tenantId: user.tenantId },
+        where: exportWhere,
         _count: { _all: true },
         _sum: { clientCount: true },
       }),
       this.prisma.clientExportBatch.count({
         where: {
-          tenantId: user.tenantId,
+          ...exportWhere,
           createdAt: { gte: since },
         },
       }),
@@ -267,7 +321,7 @@ export class ClientsService {
     q?: string,
     filters?: ClientListFilters,
   ) {
-    const where = await this.buildListWhere(user.tenantId, q, filters);
+    const where = await this.buildListWhere(user, q, filters);
     const clients = await this.prisma.client.findMany({
       where,
       orderBy: { name: 'asc' },
@@ -359,23 +413,24 @@ export class ClientsService {
   }
 
   private async buildListWhere(
-    tenantId: string,
+    user: JwtPayload,
     q?: string,
     filters?: ClientListFilters,
   ): Promise<Prisma.ClientWhereInput> {
-    const searchWhere = q ? await this.buildSearchWhere(tenantId, q) : {};
+    const searchWhere = q ? await this.buildSearchWhere(user.tenantId, q) : {};
     const stateFilter = filters?.state?.trim().toUpperCase();
     const dddFilter = digitsOnly(filters?.ddd ?? '').slice(0, 2);
     const dddWhere =
       dddFilter.length === 2
-        ? await this.buildDddWhere(tenantId, dddFilter)
+        ? await this.buildDddWhere(user, dddFilter)
         : {};
     const proximityWhere = this.buildProximityWhere(filters);
-    const mapAreaWhere = await this.buildMapAreaWhere(tenantId, filters);
+    const mapAreaWhere = await this.buildMapAreaWhere(user, filters);
 
     return {
-      tenantId,
+      tenantId: user.tenantId,
       deletedAt: null,
+      ...clientOwnerScope(user),
       ...(filters?.animalType ? { animalType: filters.animalType } : {}),
       ...(filters?.animalSex ? { animalSex: filters.animalSex } : {}),
       ...(filters?.livestockCategory
@@ -403,7 +458,7 @@ export class ClientsService {
   }
 
   private async buildMapAreaWhere(
-    tenantId: string,
+    user: JwtPayload,
     filters?: ClientListFilters,
   ): Promise<Prisma.ClientWhereInput> {
     const hasBounds =
@@ -420,7 +475,11 @@ export class ClientsService {
     if (!hasBounds && !hasCircle) return {};
 
     const clients = await this.prisma.client.findMany({
-      where: { tenantId, deletedAt: null },
+      where: {
+        tenantId: user.tenantId,
+        deletedAt: null,
+        ...clientOwnerScope(user),
+      },
       select: {
         id: true,
         phone: true,
@@ -505,6 +564,7 @@ export class ClientsService {
         tenantId: user.tenantId,
         deletedAt: null,
         isDefault: false,
+        ...clientOwnerScope(user),
       },
       select: {
         id: true,
@@ -539,10 +599,10 @@ export class ClientsService {
   }
 
   private async buildDddWhere(
-    tenantId: string,
+    user: JwtPayload,
     ddd: string,
   ): Promise<Prisma.ClientWhereInput> {
-    const digitSql = buildDigitSearchSql(tenantId, ddd);
+    const digitSql = buildDigitSearchSql(user.tenantId, ddd);
     if (!digitSql) return { id: { in: [] } };
 
     const rows = await this.prisma.$queryRaw<{ id: string }[]>(digitSql.sql);
@@ -570,7 +630,12 @@ export class ClientsService {
 
   async findOne(user: JwtPayload, id: string) {
     const client = await this.prisma.client.findFirst({
-      where: { id, tenantId: user.tenantId, deletedAt: null },
+      where: {
+        id,
+        tenantId: user.tenantId,
+        deletedAt: null,
+        ...clientOwnerScope(user),
+      },
       include: clientInclude,
     });
     if (!client) throw new NotFoundException('Cliente não encontrado');
@@ -586,6 +651,7 @@ export class ClientsService {
       const created = await tx.client.create({
         data: {
           tenantId: user.tenantId,
+          ownerId: user.sub,
           name: dto.name,
           document: dto.document?.trim() || null,
           email: dto.email || null,
@@ -619,10 +685,20 @@ export class ClientsService {
   }
 
   async update(user: JwtPayload, id: string, dto: UpdateClientDto) {
-    await this.findOrThrow(user.tenantId, id);
+    await this.findOrThrow(user, id);
 
     if (dto.responsibleId !== undefined && dto.responsibleId !== null) {
       await this.assertResponsible(user.tenantId, dto.responsibleId);
+    }
+
+    if (dto.ownerId !== undefined && !user.isSuperAdmin) {
+      throw new BadRequestException(
+        'Apenas administradores podem reatribuir o dono do cliente',
+      );
+    }
+
+    if (dto.ownerId !== undefined && dto.ownerId !== null) {
+      await this.assertOwner(user.tenantId, dto.ownerId);
     }
 
     const client = await this.prisma.$transaction(async (tx) => {
@@ -642,6 +718,9 @@ export class ClientsService {
           ...(dto.active !== undefined ? { active: dto.active } : {}),
           ...(dto.responsibleId !== undefined
             ? { responsibleId: dto.responsibleId }
+            : {}),
+          ...(user.isSuperAdmin && dto.ownerId !== undefined
+            ? { ownerId: dto.ownerId }
             : {}),
           ...(dto.animalType !== undefined ? { animalType: dto.animalType } : {}),
           ...(dto.animalSex !== undefined ? { animalSex: dto.animalSex } : {}),
@@ -738,6 +817,7 @@ export class ClientsService {
         id: { in: allIds },
         tenantId: user.tenantId,
         deletedAt: null,
+        ...clientOwnerScope(user),
       },
       include: clientInclude,
     });
@@ -901,7 +981,7 @@ export class ClientsService {
   }
 
   async remove(user: JwtPayload, id: string) {
-    const client = await this.findOrThrow(user.tenantId, id);
+    const client = await this.findOrThrow(user, id);
     if (client.isDefault) {
       throw new BadRequestException('Não é possível excluir o cliente padrão');
     }
@@ -949,12 +1029,26 @@ export class ClientsService {
     });
   }
 
-  private async findOrThrow(tenantId: string, id: string) {
+  private async findOrThrow(user: JwtPayload, id: string) {
     const client = await this.prisma.client.findFirst({
-      where: { id, tenantId, deletedAt: null },
+      where: {
+        id,
+        tenantId: user.tenantId,
+        deletedAt: null,
+        ...clientOwnerScope(user),
+      },
     });
     if (!client) throw new NotFoundException('Cliente não encontrado');
     return client;
+  }
+
+  private async assertOwner(tenantId: string, ownerId: string) {
+    const member = await this.prisma.tenantMember.findUnique({
+      where: { tenantId_userId: { tenantId, userId: ownerId } },
+    });
+    if (!member) {
+      throw new BadRequestException('Usuário dono inválido para esta empresa');
+    }
   }
 
   private async assertResponsible(tenantId: string, responsibleId: string) {
@@ -1008,6 +1102,78 @@ export class ClientsService {
     );
   }
 
+  private isProfileCompleteFromCounts(client: {
+    document: string | null;
+    addressFull?: string | null;
+    propertyCount: number;
+  }) {
+    return Boolean(
+      client.document?.trim() &&
+        client.addressFull?.trim() &&
+        client.propertyCount > 0,
+    );
+  }
+
+  serializeClientListItem(client: {
+    id: string;
+    name: string;
+    document: string | null;
+    email: string | null;
+    phone: string | null;
+    addressFull?: string | null;
+    notes: string | null;
+    animalType?: string | null;
+    animalSex?: string | null;
+    livestockCategory?: string | null;
+    active: boolean;
+    isDefault: boolean;
+    createdAt: Date;
+    updatedAt: Date;
+    properties?: Array<{
+      id: string;
+      farmName: string;
+      city: string;
+      state: string;
+      phone: string | null;
+    }>;
+    _count?: { documents: number; properties: number };
+  }) {
+    const primary = client.properties?.[0] ?? null;
+    const propertyCount = client._count?.properties ?? (primary ? 1 : 0);
+
+    return {
+      id: client.id,
+      name: client.name,
+      document: client.document,
+      email: client.email,
+      phone: client.phone,
+      notes: client.notes,
+      animalType: client.animalType ?? null,
+      animalSex: client.animalSex ?? null,
+      livestockCategory: client.livestockCategory ?? null,
+      active: client.active,
+      isDefault: client.isDefault,
+      isComplete: this.isProfileCompleteFromCounts({
+        document: client.document,
+        addressFull: client.addressFull,
+        propertyCount,
+      }),
+      documentCount: client._count?.documents ?? 0,
+      propertyCount,
+      primaryProperty: primary
+        ? {
+            id: primary.id,
+            farmName: primary.farmName,
+            city: primary.city,
+            state: primary.state,
+            phone: primary.phone,
+          }
+        : null,
+      createdAt: client.createdAt.toISOString(),
+      updatedAt: client.updatedAt.toISOString(),
+    };
+  }
+
   serializeClient(client: {
     id: string;
     name: string;
@@ -1022,6 +1188,7 @@ export class ClientsService {
     intentionNotes?: string | null;
     active: boolean;
     isDefault: boolean;
+    ownerId?: string | null;
     responsibleId: string | null;
     createdAt: Date;
     updatedAt: Date;
@@ -1060,6 +1227,7 @@ export class ClientsService {
       intentions: (client.intentions ?? []).map((ci) => ci.intention),
       active: client.active,
       isDefault: client.isDefault,
+      ownerId: client.ownerId ?? null,
       responsibleId: client.responsibleId,
       responsible: client.responsible ?? null,
       properties,

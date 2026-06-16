@@ -227,6 +227,28 @@ export const importCommitSchema = z
 
 
 
+export const auctionImportCommitRowSchema = z.object({
+  name: z.string().min(2).max(200),
+  scheduledAt: z.string().datetime().optional().nullable(),
+  animalType: animalTypeSchema,
+  animalSex: animalSexSchema,
+  livestockCategories: z.array(z.enum(LIVESTOCK_CATEGORIES)).default([]),
+  selected: z.boolean().optional(),
+});
+
+
+
+export const auctionImportCommitSchema = z
+  .object({
+    fileName: z.string().min(1).max(255),
+    rows: z.array(auctionImportCommitRowSchema).min(1).max(500),
+  })
+  .refine((d) => d.rows.some((row) => row.selected !== false), {
+    message: 'Selecione ao menos uma linha para importar',
+  });
+
+
+
 export const teamCreateSchema = z.object({
 
   name: z.string().min(2).max(100),
@@ -320,6 +342,10 @@ export type ImportRowData = z.infer<typeof importRowDataSchema>;
 export type ImportCommitInput = z.infer<typeof importCommitSchema>;
 
 export type ImportCommitRow = z.infer<typeof importCommitRowSchema>;
+
+export type AuctionImportCommitRow = z.infer<typeof auctionImportCommitRowSchema>;
+
+export type AuctionImportCommitInput = z.infer<typeof auctionImportCommitSchema>;
 
 
 export const CLIENT_EXPORT_PURPOSES = [

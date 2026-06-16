@@ -2,8 +2,10 @@
 
 import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
-import { useEffect, useState } from 'react';
+import { useEffect } from 'react';
 import { ThemeToggle } from '@/components/ThemeToggle';
+import { useAuthMe } from '@/hooks/use-auth-me';
+import { useLogout } from '@/hooks/use-logout';
 
 interface Props {
   children: React.ReactNode;
@@ -13,28 +15,22 @@ interface Props {
 export function AdminShell({ children, title }: Props) {
   const router = useRouter();
   const pathname = usePathname();
-  const [user, setUser] = useState<{ name: string; email: string } | null>(null);
-  const [ready, setReady] = useState(false);
+  const logout = useLogout();
+  const { data, isLoading, isError } = useAuthMe();
+
+  const user = data?.user ?? null;
+  const ready = Boolean(user && data?.isSuperAdmin);
 
   useEffect(() => {
-    fetch('/api/auth/me')
-      .then((r) => r.json())
-      .then((data) => {
-        if (!data.user || !data.isSuperAdmin) {
-          router.push('/clients');
-          return;
-        }
-        setUser(data.user);
-        setReady(true);
-      })
-      .catch(() => router.push('/login'));
-  }, [router]);
-
-  async function logout() {
-    await fetch('/api/auth/logout', { method: 'POST' });
-    router.push('/login');
-    router.refresh();
-  }
+    if (isLoading) return;
+    if (isError || !user) {
+      router.push('/login');
+      return;
+    }
+    if (!data?.isSuperAdmin) {
+      router.push('/clients');
+    }
+  }, [isLoading, isError, user, data?.isSuperAdmin, router]);
 
   const nav = [
     { href: '/admin', label: 'Visão geral', exact: true },

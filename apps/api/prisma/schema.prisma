@@ -100,6 +100,12 @@ model User {
 
   auditLogs         AuditLog[]
 
+  attendanceBoardColumns AttendanceBoardColumn[]
+  attendanceActions      AttendanceAction[]
+  attendanceActivities   AttendanceActivity[]
+  auctionMatches         AuctionMatch[]
+  clientsOwned           Client[] @relation("ClientOwner")
+
 
 
   @@map("users")
@@ -148,6 +154,11 @@ model Tenant {
 
   auditLogs           AuditLog[]
 
+  auctions            Auction[]
+
+  attendanceBoardColumns AttendanceBoardColumn[]
+  attendanceActions      AttendanceAction[]
+
 
 
   @@map("tenants")
@@ -175,6 +186,8 @@ model TenantMember {
 
 
   @@id([tenantId, userId])
+
+  @@index([userId])
 
   @@map("tenant_members")
 
@@ -268,6 +281,8 @@ model Client {
 
   tenantId       String   @map("tenant_id") @db.Uuid
 
+  ownerId        String?  @map("owner_id") @db.Uuid
+
   responsibleId  String?  @map("responsible_id") @db.Uuid
 
   name           String
@@ -292,6 +307,11 @@ model Client {
 
   intentionNotes     String?  @map("intention_notes")
 
+  attendanceStage       String?   @map("attendance_stage")
+  attendanceChecklist   String[]  @default([]) @map("attendance_checklist")
+  attendanceFinalizedAt DateTime? @map("attendance_finalized_at")
+  attendanceUpdatedAt   DateTime? @map("attendance_updated_at")
+
   active         Boolean  @default(true)
 
   isDefault      Boolean  @default(false) @map("is_default")
@@ -306,6 +326,8 @@ model Client {
 
   tenant            Tenant             @relation(fields: [tenantId], references: [id], onDelete: Cascade)
 
+  owner             User?              @relation("ClientOwner", fields: [ownerId], references: [id], onDelete: SetNull)
+
   responsible       Collaborator?      @relation("ClientResponsible", fields: [responsibleId], references: [id], onDelete: SetNull)
 
   documents         Document[]
@@ -316,9 +338,15 @@ model Client {
 
   intentions        ClientIntention[]
 
+  auctionMatches    AuctionMatch[]
+
+  attendanceActions AttendanceAction[]
+
 
 
   @@index([tenantId, name])
+
+  @@index([tenantId, ownerId])
 
   @@index([tenantId, document])
 
@@ -329,6 +357,10 @@ model Client {
   @@index([tenantId, animalSex])
 
   @@index([tenantId, livestockCategory])
+
+  @@index([tenantId, attendanceStage])
+
+  @@index([tenantId, deletedAt])
 
   @@map("clients")
 
@@ -375,6 +407,8 @@ model ClientProperty {
   @@index([clientId, sortOrder])
 
   @@index([tenantId])
+
+  @@index([tenantId, state])
 
   @@map("client_properties")
 
@@ -562,6 +596,8 @@ model ClientIntention {
 
   @@id([clientId, intentionId])
 
+  @@index([intentionId])
+
   @@map("client_intentions")
 
 }
@@ -717,6 +753,268 @@ model BrazilianCity {
   @@index([state])
 
   @@map("brazilian_cities")
+
+}
+
+
+
+model Auction {
+
+  id                  String    @id @default(uuid()) @db.Uuid
+
+  tenantId            String    @map("tenant_id") @db.Uuid
+
+  name                String
+
+  scheduledAt         DateTime? @map("scheduled_at")
+
+  location            String?
+
+  status              String    @default("agendado")
+
+  animalType          String?   @map("animal_type")
+
+  animalSex           String?   @map("animal_sex")
+
+  livestockCategories String[]  @default([]) @map("livestock_categories")
+
+  targetIntentionCode String?   @map("target_intention_code")
+
+  offersNotes         String?   @map("offers_notes")
+
+  isBulaRemates       Boolean   @default(false) @map("is_bula_remates")
+
+  active              Boolean   @default(true)
+
+  source              String    @default("manual")
+
+  externalKey         String?   @map("external_key")
+
+  createdAt           DateTime  @default(now()) @map("created_at")
+
+  updatedAt           DateTime  @updatedAt @map("updated_at")
+
+  deletedAt           DateTime? @map("deleted_at")
+
+
+
+  tenant  Tenant         @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  matches AuctionMatch[]
+
+  attendanceActions AttendanceAction[]
+
+
+
+  @@index([tenantId, scheduledAt])
+
+  @@index([tenantId, status])
+
+  @@index([tenantId, deletedAt])
+
+  @@unique([tenantId, externalKey])
+
+  @@map("auctions")
+
+}
+
+
+
+model AuctionMatch {
+
+  auctionId String   @map("auction_id") @db.Uuid
+
+  clientId  String   @map("client_id") @db.Uuid
+
+  ownerId   String   @map("owner_id") @db.Uuid
+
+  status    String
+
+  source    String   @default("manual")
+
+  notes     String?
+
+  createdAt DateTime @default(now()) @map("created_at")
+
+
+
+  auction Auction @relation(fields: [auctionId], references: [id], onDelete: Cascade)
+
+  client  Client  @relation(fields: [clientId], references: [id], onDelete: Cascade)
+
+  owner   User    @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+
+
+
+  @@id([auctionId, clientId, ownerId])
+
+  @@index([clientId])
+
+  @@index([ownerId])
+
+  @@map("auction_matches")
+
+}
+
+
+
+model AttendanceBoardColumn {
+
+  id        String   @id @default(uuid()) @db.Uuid
+
+  tenantId  String   @map("tenant_id") @db.Uuid
+
+  ownerId   String   @map("owner_id") @db.Uuid
+
+  title     String
+
+  color     String?
+
+  sortOrder Int      @default(0) @map("sort_order")
+
+  createdAt DateTime @default(now()) @map("created_at")
+
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  deletedAt DateTime? @map("deleted_at")
+
+
+
+  tenant  Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  owner   User   @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+
+  actions AttendanceAction[]
+
+
+
+  @@index([tenantId, ownerId, sortOrder])
+
+  @@map("attendance_board_columns")
+
+}
+
+
+
+model AttendanceAction {
+
+  id          String    @id @default(uuid()) @db.Uuid
+
+  tenantId    String    @map("tenant_id") @db.Uuid
+
+  ownerId     String    @map("owner_id") @db.Uuid
+
+  columnId    String    @map("column_id") @db.Uuid
+
+  clientId    String    @map("client_id") @db.Uuid
+
+  auctionId   String?   @map("auction_id") @db.Uuid
+
+  title       String
+
+  description String?
+
+  status      String    @default("open")
+
+  sortOrder   Int       @default(0) @map("sort_order")
+
+  dueDate     DateTime? @map("due_date")
+
+  completedAt DateTime? @map("completed_at")
+
+  createdAt   DateTime  @default(now()) @map("created_at")
+
+  updatedAt   DateTime  @updatedAt @map("updated_at")
+
+  deletedAt   DateTime? @map("deleted_at")
+
+
+
+  tenant    Tenant                @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  owner     User                  @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+
+  column    AttendanceBoardColumn @relation(fields: [columnId], references: [id], onDelete: Cascade)
+
+  client    Client                @relation(fields: [clientId], references: [id], onDelete: Cascade)
+
+  auction   Auction?              @relation(fields: [auctionId], references: [id], onDelete: SetNull)
+
+  tasks     AttendanceActionTask[]
+
+  activities AttendanceActivity[]
+
+
+
+  @@index([tenantId, ownerId, columnId, sortOrder])
+
+  @@index([clientId])
+
+  @@index([auctionId])
+
+  @@map("attendance_actions")
+
+}
+
+
+
+model AttendanceActionTask {
+
+  id        String    @id @default(uuid()) @db.Uuid
+
+  actionId  String    @map("action_id") @db.Uuid
+
+  title     String
+
+  done      Boolean   @default(false)
+
+  sortOrder Int       @default(0) @map("sort_order")
+
+  dueDate   DateTime? @map("due_date")
+
+  createdAt DateTime  @default(now()) @map("created_at")
+
+  updatedAt DateTime  @updatedAt @map("updated_at")
+
+
+
+  action AttendanceAction @relation(fields: [actionId], references: [id], onDelete: Cascade)
+
+
+
+  @@index([actionId, sortOrder])
+
+  @@map("attendance_action_tasks")
+
+}
+
+
+
+model AttendanceActivity {
+
+  id        String   @id @default(uuid()) @db.Uuid
+
+  actionId  String   @map("action_id") @db.Uuid
+
+  authorId  String?  @map("author_id") @db.Uuid
+
+  type      String
+
+  content   String
+
+  createdAt DateTime @default(now()) @map("created_at")
+
+
+
+  action AttendanceAction @relation(fields: [actionId], references: [id], onDelete: Cascade)
+
+  author User?            @relation(fields: [authorId], references: [id], onDelete: SetNull)
+
+
+
+  @@index([actionId, createdAt(sort: Desc)])
+
+  @@map("attendance_activities")
 
 }
 

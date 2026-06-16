@@ -100,7 +100,11 @@ export class ClientsController {
 
     @Query('areaRadiusKm') areaRadiusKm?: string,
 
+    @Query('view') view?: string,
+
   ) {
+
+    const listView = view === 'full' ? 'full' : 'summary';
 
     return this.clientsService.list(
 
@@ -130,6 +134,8 @@ export class ClientsController {
         areaCenterLng: areaCenterLng ? Number(areaCenterLng) : undefined,
         areaRadiusKm: areaRadiusKm ? Number(areaRadiusKm) : undefined,
       },
+
+      listView,
 
     );
 

@@ -22,13 +22,11 @@ import {
 
 } from '@nestjs/common';
 
-import { TenantRole } from '@prisma/client';
-
 import { CurrentUser } from '../common/decorators/current-user.decorator';
 
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 
-import { Roles, RolesGuard } from '../common/guards/roles.guard';
+import { SuperAdminGuard } from '../common/guards/super-admin.guard';
 
 import { JwtPayload } from '../auth/auth.types';
 
@@ -42,7 +40,7 @@ import { UpdateCollaboratorDto } from './dto/update-collaborator.dto';
 
 @Controller('collaborators')
 
-@UseGuards(JwtAuthGuard, RolesGuard)
+@UseGuards(JwtAuthGuard, SuperAdminGuard)
 
 export class CollaboratorsController {
 
@@ -106,8 +104,6 @@ export class CollaboratorsController {
 
   @Post()
 
-  @Roles(TenantRole.owner, TenantRole.admin, TenantRole.member)
-
   create(@CurrentUser() user: JwtPayload, @Body() dto: CreateCollaboratorDto) {
 
     return this.collaboratorsService.create(user, dto);
@@ -117,8 +113,6 @@ export class CollaboratorsController {
 
 
   @Patch(':id')
-
-  @Roles(TenantRole.owner, TenantRole.admin, TenantRole.member)
 
   update(
 
@@ -137,8 +131,6 @@ export class CollaboratorsController {
 
 
   @Delete(':id')
-
-  @Roles(TenantRole.owner, TenantRole.admin, TenantRole.member)
 
   remove(
 

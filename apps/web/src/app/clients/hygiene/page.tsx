@@ -11,7 +11,7 @@ import { HygieneReviewDrawer } from '@/components/clients/HygieneReviewDrawer';
 import { MergeClientsDrawer } from '@/components/clients/MergeClientsDrawer';
 import { ClientTagsSection } from '@/components/clients/ClientTagsSection';
 import { BRAZIL_STATES } from '@/components/clients/CityUfField';
-import type { TenantIntention } from '@/types/client-import';
+import { useTenantIntentions } from '@/hooks/use-tenant-intentions';
 import type {
   DuplicateGroup,
   HygieneClient,
@@ -54,7 +54,7 @@ export default function ClientHygienePage() {
   const [error, setError] = useState('');
 
   const [summary, setSummary] = useState<HygieneSummary | null>(null);
-  const [intentions, setIntentions] = useState<TenantIntention[]>([]);
+  const { data: intentions = [] } = useTenantIntentions();
 
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [batchTags, setBatchTags] = useState(emptyBatchTags);
@@ -74,13 +74,6 @@ export default function ClientHygienePage() {
     setMergeGroup(group);
     setMergeSelectedIds(selectedIds ?? null);
   }
-
-  useEffect(() => {
-    fetch('/api/tenant-intentions')
-      .then((r) => r.json())
-      .then((data) => setIntentions(data.items ?? []))
-      .catch(() => {});
-  }, []);
 
   useEffect(() => {
     const t = setTimeout(() => setDebouncedSearch(search), 300);

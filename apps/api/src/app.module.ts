@@ -20,6 +20,8 @@ import { TenantIntentionsModule } from './tenant-intentions/tenant-intentions.mo
 import { GeoModule } from './geo/geo.module';
 import { ClientHygieneModule } from './client-hygiene/client-hygiene.module';
 import { ClientAnalyticsModule } from './client-analytics/client-analytics.module';
+import { AttendanceModule } from './attendance/attendance.module';
+import { AuctionsModule } from './auctions/auctions.module';
 import { AuditModule } from './audit/audit.module';
 import { AuditInterceptor } from './audit/audit.interceptor';
 import { AdminModule } from './admin/admin.module';
@@ -54,6 +56,8 @@ import { RedisThrottlerStorage } from './common/redis-throttler.storage';
     GeoModule,
     ClientHygieneModule,
     ClientAnalyticsModule,
+    AttendanceModule,
+    AuctionsModule,
     AdminModule,
     HealthModule,
   ],

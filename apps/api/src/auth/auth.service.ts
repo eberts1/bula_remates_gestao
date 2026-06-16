@@ -69,6 +69,7 @@ export class AuthService {
       await tx.client.create({
         data: {
           tenantId: tenant.id,
+          ownerId: user.id,
           name: 'Geral',
           document: '00000000000',
           isDefault: true,

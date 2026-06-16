@@ -6,6 +6,8 @@ import { useCallback, useEffect, useState } from 'react';
 
 import { BulaLogo } from '@/components/BulaLogo';
 import { ThemeToggle } from '@/components/ThemeToggle';
+import { useAuthMe } from '@/hooks/use-auth-me';
+import { useLogout } from '@/hooks/use-logout';
 
 interface Props {
   children: React.ReactNode;
@@ -38,25 +40,20 @@ function isNavActive(pathname: string, href: string): boolean {
 export function AppShell({ children, title }: Props) {
   const router = useRouter();
   const pathname = usePathname();
-  const [user, setUser] = useState<{ name: string; email: string } | null>(null);
-  const [tenant, setTenant] = useState<{ name: string } | null>(null);
-  const [isSuperAdmin, setIsSuperAdmin] = useState(false);
+  const logout = useLogout();
+  const { data, isLoading, isError } = useAuthMe();
   const [menuOpen, setMenuOpen] = useState(false);
 
+  const user = data?.user ?? null;
+  const tenant = data?.tenant ?? null;
+  const isSuperAdmin = Boolean(data?.isSuperAdmin);
+
   useEffect(() => {
-    fetch('/api/auth/me')
-      .then((r) => r.json())
-      .then((data) => {
-        if (data.user) {
-          setUser(data.user);
-          setTenant(data.tenant);
-          setIsSuperAdmin(Boolean(data.isSuperAdmin));
-        } else {
-          router.push('/login');
-        }
-      })
-      .catch(() => router.push('/login'));
-  }, [router]);
+    if (isLoading) return;
+    if (isError || !user) {
+      router.push('/login');
+    }
+  }, [isLoading, isError, user, router]);
 
   const closeMenu = useCallback(() => setMenuOpen(false), []);
 
@@ -80,19 +77,17 @@ export function AppShell({ children, title }: Props) {
     };
   }, [menuOpen, closeMenu]);
 
-  async function logout() {
-    await fetch('/api/auth/logout', { method: 'POST' });
-    router.push('/login');
-    router.refresh();
-  }
-
   const nav: NavItem[] = [
     { href: '/clients', label: 'Clientes', icon: '👥' },
+    { href: '/attendance', label: 'Atendimento', icon: '📋' },
+    { href: '/auctions', label: 'Leilões', icon: '🔨' },
     { href: '/clients/dashboard', label: 'Dashboard', icon: '📊' },
     { href: '/clients/import', label: 'Importar', icon: '📥' },
     { href: '/clients/export', label: 'Exportar', icon: '📤' },
     { href: '/clients/hygiene', label: 'Higienizar', icon: '🧹' },
-    { href: '/collaborators', label: 'Colaboradores', icon: '👤' },
+    ...(isSuperAdmin
+      ? [{ href: '/collaborators', label: 'Colaboradores', icon: '👤' }]
+      : []),
     ...(isSuperAdmin ? [{ href: '/admin', label: 'Admin', icon: '⚙️' }] : []),
   ];
 

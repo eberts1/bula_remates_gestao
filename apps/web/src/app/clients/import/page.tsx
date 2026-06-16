@@ -11,13 +11,13 @@ import { ImportColumnMappingInfo } from '@/components/clients/ImportColumnMappin
 import { ImportProgressBar } from '@/components/clients/ImportProgressBar';
 import { ImportReviewDrawer } from '@/components/clients/ImportReviewDrawer';
 import { ImportSourceBadge } from '@/components/clients/ImportSourceBadge';
+import { useTenantIntentions } from '@/hooks/use-tenant-intentions';
 import type {
   BatchTags,
   CommitImportResult,
   ImportProgressState,
   ImportRow,
   ParseImportResponse,
-  TenantIntention,
 } from '@/types/client-import';
 import {
   defaultResolutionForRow,
@@ -70,7 +70,7 @@ function toImportRow(
 }
 
 export default function ClientImportPage() {
-  const [intentions, setIntentions] = useState<TenantIntention[]>([]);
+  const { data: intentions = [] } = useTenantIntentions();
   const [batchTags, setBatchTags] = useState<BatchTags>(emptyBatchTags);
   const [rows, setRows] = useState<ImportRow[]>([]);
   const [fileMeta, setFileMeta] = useState<{
@@ -94,13 +94,6 @@ export default function ClientImportPage() {
 
   const busy =
     progress?.phase === 'parsing' || progress?.phase === 'committing';
-
-  useEffect(() => {
-    fetch('/api/tenant-intentions')
-      .then((r) => r.json())
-      .then((data) => setIntentions(data.items ?? []))
-      .catch(() => {});
-  }, []);
 
   useEffect(() => {
     const saved = loadImportResume();

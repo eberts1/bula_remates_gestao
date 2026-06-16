@@ -10,6 +10,7 @@ import { JwtPayload } from '../auth/auth.types';
 import { ClientsService } from '../clients/clients.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { AuditService } from '../audit/audit.service';
+import { clientOwnerScope } from '../common/client-owner-scope.util';
 import { normalizeLegacyCode } from './parsers/pdf-etb-estancia.parser';
 import { sanitizeImportEmail } from './parsers/email.util';
 import { parseImportFile, type ColumnMapping } from './parsers/parser.registry';
@@ -164,7 +165,7 @@ export class ClientImportsService {
       );
     }
 
-    const cache = await this.buildConflictCache(user.tenantId);
+    const cache = await this.buildConflictCache(user);
 
     const rowsWithConflicts = parsed.rows.map((row) => {
       const email = sanitizeImportEmail(row.email);
@@ -389,7 +390,7 @@ export class ClientImportsService {
       }
       if (!targetId) {
         targetId = (
-          await this.findConflict(user.tenantId, {
+          await this.findConflict(user, {
             name: row.name,
             document: row.document ?? null,
             phone: row.phone ?? null,
@@ -401,6 +402,18 @@ export class ClientImportsService {
         )?.clientId;
       }
       if (!targetId) {
+        return { imported: 0, updated: 0, skipped: 1 };
+      }
+      const owned = await tx.client.findFirst({
+        where: {
+          id: targetId,
+          tenantId: user.tenantId,
+          deletedAt: null,
+          ...clientOwnerScope(user),
+        },
+        select: { id: true },
+      });
+      if (!owned) {
         return { imported: 0, updated: 0, skipped: 1 };
       }
       await tx.client.update({
@@ -432,6 +445,7 @@ export class ClientImportsService {
     const created = await tx.client.create({
       data: {
         tenantId: user.tenantId,
+        ownerId: user.sub,
         name: row.name,
         document: row.document?.trim() || null,
         legacyCode: legacyNorm || row.legacyCode?.trim() || null,
@@ -497,9 +511,13 @@ export class ClientImportsService {
     return email.trim().toLowerCase();
   }
 
-  async buildConflictCache(tenantId: string): Promise<ConflictCache> {
+  async buildConflictCache(user: JwtPayload): Promise<ConflictCache> {
     const clients = await this.prisma.client.findMany({
-      where: { tenantId, deletedAt: null },
+      where: {
+        tenantId: user.tenantId,
+        deletedAt: null,
+        ...clientOwnerScope(user),
+      },
       select: {
         id: true,
         name: true,
@@ -602,7 +620,7 @@ export class ClientImportsService {
   }
 
   async findConflict(
-    tenantId: string,
+    user: JwtPayload,
     row: {
       name: string;
       document: string | null;
@@ -613,7 +631,7 @@ export class ClientImportsService {
       groupKey: string | null;
     },
   ): Promise<ImportConflict | null> {
-    const cache = await this.buildConflictCache(tenantId);
+    const cache = await this.buildConflictCache(user);
     return this.findConflictCached(cache, row);
   }
 

@@ -16,6 +16,35 @@ export interface ClientIntentionRef {
   label: string;
 }
 
+export interface ClientPrimaryProperty {
+  id: string;
+  farmName: string;
+  city: string;
+  state: string;
+  phone: string | null;
+}
+
+/** Resposta leve de GET /clients (listagem e preview de exportação). */
+export interface ClientListItem {
+  id: string;
+  name: string;
+  document: string | null;
+  email: string | null;
+  phone: string | null;
+  notes: string | null;
+  animalType: string | null;
+  animalSex: string | null;
+  livestockCategory: string | null;
+  active: boolean;
+  isDefault: boolean;
+  isComplete: boolean;
+  documentCount: number;
+  propertyCount: number;
+  primaryProperty: ClientPrimaryProperty | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
 export interface Client {
   id: string;
   name: string;

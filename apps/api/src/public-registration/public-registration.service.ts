@@ -36,10 +36,13 @@ export class PublicRegistrationService {
       throw new NotFoundException('Página de cadastro não encontrada');
     }
 
+    const ownerId = await this.resolveRegistrationOwner(tenant.id);
+
     const client = await this.prisma.$transaction(async (tx) => {
       const created = await tx.client.create({
         data: {
           tenantId: tenant.id,
+          ownerId,
           name: dto.name,
           document: dto.document.trim(),
           email: dto.email || null,
@@ -97,7 +100,17 @@ export class PublicRegistrationService {
     );
   }
 
-  private async resolveUploadAuthor(tenantId: string): Promise<string> {
+  private async resolveRegistrationOwner(tenantId: string): Promise<string> {
+    const superAdmin = await this.prisma.tenantMember.findFirst({
+      where: {
+        tenantId,
+        user: { isSuperAdmin: true, deletedAt: null },
+      },
+      select: { userId: true },
+      orderBy: { joinedAt: 'asc' },
+    });
+    if (superAdmin) return superAdmin.userId;
+
     const owner = await this.prisma.tenantMember.findFirst({
       where: { tenantId, role: TenantRole.owner },
       select: { userId: true },
@@ -112,5 +125,9 @@ export class PublicRegistrationService {
       throw new NotFoundException('Empresa sem usuários configurados');
     }
     return anyMember.userId;
+  }
+
+  private async resolveUploadAuthor(tenantId: string): Promise<string> {
+    return this.resolveRegistrationOwner(tenantId);
   }
 }

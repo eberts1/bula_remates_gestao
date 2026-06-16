@@ -1,7 +1,8 @@
 'use client';
 
+import { useQueryClient } from '@tanstack/react-query';
 import { useSearchParams } from 'next/navigation';
-import { Suspense, useCallback, useEffect, useState } from 'react';
+import { Suspense, useEffect, useMemo, useState } from 'react';
 
 import { AppShell } from '@/components/AppShell';
 import { ClientFormDrawer } from '@/components/clients/ClientFormDrawer';
@@ -13,14 +14,17 @@ import {
   emptyTagFilters,
   type TagFilterValues,
 } from '@/components/clients/ClientTagFilters';
-
-import type { Client } from '@/types/client';
-import type { TenantIntention } from '@/types/client-import';
+import { useClientDetail } from '@/hooks/use-client-detail';
+import { useClientsList } from '@/hooks/use-clients-list';
+import { useTenantIntentions } from '@/hooks/use-tenant-intentions';
+import { queryKeys } from '@/lib/query/query-keys';
+import type { ClientListItem } from '@/types/client';
 
 const PAGE_LIMIT = 50;
 
 function ClientsPageContent() {
   const searchParams = useSearchParams();
+  const queryClient = useQueryClient();
 
   const [search, setSearch] = useState('');
   const [debouncedSearch, setDebouncedSearch] = useState('');
@@ -43,22 +47,47 @@ function ClientsPageContent() {
     ),
   );
 
-  const [intentions, setIntentions] = useState<TenantIntention[]>([]);
-  const [clients, setClients] = useState<Client[]>([]);
-  const [total, setTotal] = useState(0);
-  const [totalPages, setTotalPages] = useState(1);
   const [page, setPage] = useState(1);
-  const [loading, setLoading] = useState(true);
-
   const [drawerOpen, setDrawerOpen] = useState(false);
-  const [selectedClient, setSelectedClient] = useState<Client | null>(null);
+  const [editClientId, setEditClientId] = useState<string | null>(null);
 
-  useEffect(() => {
-    fetch('/api/tenant-intentions')
-      .then((r) => r.json())
-      .then((data) => setIntentions(data.items ?? []))
-      .catch(() => {});
-  }, []);
+  const { data: intentions = [] } = useTenantIntentions();
+
+  const listFilters = useMemo(
+    () => ({
+      page,
+      limit: PAGE_LIMIT,
+      q: debouncedSearch || undefined,
+      animalType: tagFilters.animalType || undefined,
+      animalSex: tagFilters.animalSex || undefined,
+      livestockCategory: tagFilters.livestockCategory || undefined,
+      intentionId: tagFilters.intentionId || undefined,
+      nearCity:
+        tagFilters.nearCity && tagFilters.nearState && tagFilters.radiusKm
+          ? tagFilters.nearCity
+          : undefined,
+      nearState:
+        tagFilters.nearCity && tagFilters.nearState && tagFilters.radiusKm
+          ? tagFilters.nearState
+          : undefined,
+      radiusKm:
+        tagFilters.nearCity && tagFilters.nearState && tagFilters.radiusKm
+          ? tagFilters.radiusKm
+          : undefined,
+    }),
+    [page, debouncedSearch, tagFilters],
+  );
+
+  const { data: clientsData, isLoading, isFetching } = useClientsList(listFilters);
+  const { data: editClient, isLoading: drawerLoading } = useClientDetail(
+    editClientId,
+    drawerOpen && Boolean(editClientId),
+  );
+
+  const clients = clientsData?.items ?? [];
+  const total = clientsData?.total ?? 0;
+  const totalPages = clientsData?.totalPages ?? 1;
+  const loading = isLoading || (isFetching && clients.length === 0);
 
   useEffect(() => {
     const t = setTimeout(() => setDebouncedSearch(search), 300);
@@ -69,63 +98,24 @@ function ClientsPageContent() {
     setPage(1);
   }, [debouncedSearch, tagFilters]);
 
-  const load = useCallback(async () => {
-    setLoading(true);
-
-    try {
-      const params = new URLSearchParams({
-        limit: String(PAGE_LIMIT),
-        page: String(page),
-      });
-
-      if (debouncedSearch) params.set('q', debouncedSearch);
-      if (tagFilters.animalType) params.set('animalType', tagFilters.animalType);
-      if (tagFilters.animalSex) params.set('animalSex', tagFilters.animalSex);
-      if (tagFilters.livestockCategory) {
-        params.set('livestockCategory', tagFilters.livestockCategory);
-      }
-      if (tagFilters.intentionId) params.set('intentionId', tagFilters.intentionId);
-      if (tagFilters.nearCity && tagFilters.nearState && tagFilters.radiusKm) {
-        params.set('nearCity', tagFilters.nearCity);
-        params.set('nearState', tagFilters.nearState);
-        params.set('radiusKm', tagFilters.radiusKm);
-      }
-
-      const res = await fetch(`/api/clients?${params}`);
-      const data = await res.json();
-
-      if (res.ok) {
-        setClients(data.items ?? []);
-        setTotal(data.total ?? 0);
-        setTotalPages(data.totalPages ?? 1);
-      }
-    } finally {
-      setLoading(false);
-    }
-  }, [debouncedSearch, tagFilters, page]);
-
-  useEffect(() => {
-    void load();
-  }, [load]);
-
   function handleSaved() {
-    void load();
-    setSelectedClient(null);
+    void queryClient.invalidateQueries({ queryKey: queryKeys.clients.all });
+    setEditClientId(null);
   }
 
   function openNewClient() {
-    setSelectedClient(null);
+    setEditClientId(null);
     setDrawerOpen(true);
   }
 
-  function openEditClient(client: Client) {
-    setSelectedClient(client);
+  function openEditClient(item: ClientListItem) {
+    setEditClientId(item.id);
     setDrawerOpen(true);
   }
 
   function closeDrawer() {
     setDrawerOpen(false);
-    setSelectedClient(null);
+    setEditClientId(null);
   }
 
   function clearFilters() {
@@ -174,7 +164,8 @@ function ClientsPageContent() {
 
       <ClientFormDrawer
         open={drawerOpen}
-        client={selectedClient}
+        client={editClientId ? (editClient ?? null) : null}
+        loading={drawerLoading}
         onClose={closeDrawer}
         onSaved={handleSaved}
       />

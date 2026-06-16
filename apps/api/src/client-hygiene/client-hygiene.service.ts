@@ -1,6 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import { DocumentStatus, Prisma } from '@prisma/client';
 import { JwtPayload } from '../auth/auth.types';
+import { clientOwnerScope } from '../common/client-owner-scope.util';
 import { PrismaService } from '../prisma/prisma.service';
 import { ClientsService } from '../clients/clients.service';
 import { GeoService, LocationIssue, CityMatch } from '../geo/geo.service';
@@ -70,6 +71,7 @@ export class ClientHygieneService {
       tenantId: user.tenantId,
       deletedAt: null,
       isDefault: false,
+      ...clientOwnerScope(user),
       ...(params.q
         ? {
             OR: [
@@ -118,7 +120,12 @@ export class ClientHygieneService {
 
   async summary(user: JwtPayload) {
     const clients = await this.prisma.client.findMany({
-      where: { tenantId: user.tenantId, deletedAt: null, isDefault: false },
+      where: {
+        tenantId: user.tenantId,
+        deletedAt: null,
+        isDefault: false,
+        ...clientOwnerScope(user),
+      },
       include: hygieneInclude,
     });
 
@@ -148,7 +155,7 @@ export class ClientHygieneService {
     user: JwtPayload,
     params: { q?: string; strategies?: string },
   ) {
-    const clients = await this.loadHygieneClients(user.tenantId, params.q);
+    const clients = await this.loadHygieneClients(user, params.q);
     const strategies = this.parseStrategies(params.strategies);
     const rawGroups = buildDuplicateGroups(
       clients.map((c) => ({
@@ -206,11 +213,12 @@ export class ClientHygieneService {
     };
   }
 
-  private async loadHygieneClients(tenantId: string, q?: string) {
+  private async loadHygieneClients(user: JwtPayload, q?: string) {
     const where: Prisma.ClientWhereInput = {
-      tenantId,
+      tenantId: user.tenantId,
       deletedAt: null,
       isDefault: false,
+      ...clientOwnerScope(user),
       ...(q
         ? {
             OR: [
@@ -246,6 +254,7 @@ export class ClientHygieneService {
         id: { in: dto.clientIds },
         tenantId: user.tenantId,
         deletedAt: null,
+        ...clientOwnerScope(user),
       },
       select: { id: true },
     });

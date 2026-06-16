@@ -58,6 +58,8 @@ export async function GET(req: NextRequest) {
 
   const areaRadiusKm = searchParams.get('areaRadiusKm');
 
+  const view = searchParams.get('view');
+
   const query = new URLSearchParams({ page, limit });
 
   if (q) query.set('q', q);
@@ -93,6 +95,8 @@ export async function GET(req: NextRequest) {
   if (areaCenterLng) query.set('areaCenterLng', areaCenterLng);
 
   if (areaRadiusKm) query.set('areaRadiusKm', areaRadiusKm);
+
+  if (view) query.set('view', view);
 
 
 

@@ -1,6 +1,7 @@
 'use client';
 
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useAuthMe } from '@/hooks/use-auth-me';
 import type { ClientFormTokenItem } from '@/types/client';
 
 interface Props {
@@ -16,8 +17,14 @@ export function ClientFormLinksPanel({
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [lastUrl, setLastUrl] = useState('');
-  const [staticUrl, setStaticUrl] = useState('');
   const [copied, setCopied] = useState(false);
+  const { data: authMe } = useAuthMe();
+
+  const staticUrl = useMemo(() => {
+    if (!showStaticLink || !authMe?.tenant?.slug) return '';
+    const origin = typeof window !== 'undefined' ? window.location.origin : '';
+    return `${origin}/cadastro/novo/${authMe.tenant.slug}`;
+  }, [showStaticLink, authMe?.tenant?.slug]);
 
   const load = useCallback(async () => {
     if (!clientId) return;
@@ -29,20 +36,6 @@ export function ClientFormLinksPanel({
   useEffect(() => {
     if (clientId) void load();
   }, [load, clientId]);
-
-  useEffect(() => {
-    if (!showStaticLink) return;
-    fetch('/api/auth/me')
-      .then((r) => r.json())
-      .then((data) => {
-        if (data.tenant?.slug) {
-          const origin =
-            typeof window !== 'undefined' ? window.location.origin : '';
-          setStaticUrl(`${origin}/cadastro/novo/${data.tenant.slug}`);
-        }
-      })
-      .catch(() => {});
-  }, [showStaticLink]);
 
   async function copyStatic() {
     if (!staticUrl) return;

@@ -1,7 +1,7 @@
 'use client';
 
 import { ensureBrazilMobileNinthDigit } from '@docs/shared';
-import type { Client } from '@/types/client';
+import type { ClientListItem } from '@/types/client';
 
 const ANIMAL_TYPE_LABELS: Record<string, string> = {
   corte: 'Corte',
@@ -29,22 +29,14 @@ function extractDdd(phone: string | null | undefined): string {
   return local.length >= 2 ? local.slice(0, 2) : '';
 }
 
-function primaryProperty(client: Client) {
-  return client.properties[0] ?? null;
-}
-
-function clientDdd(client: Client): string {
+function clientDdd(client: ClientListItem): string {
   const fromClient = extractDdd(client.phone);
   if (fromClient) return fromClient;
-  for (const property of client.properties) {
-    const ddd = extractDdd(property.phone);
-    if (ddd) return ddd;
-  }
-  return '';
+  return extractDdd(client.primaryProperty?.phone);
 }
 
 interface Props {
-  clients: Client[];
+  clients: ClientListItem[];
   loading: boolean;
 }
 
@@ -86,7 +78,7 @@ export function ClientExportPreviewTable({ clients, loading }: Props) {
         </thead>
         <tbody>
           {clients.map((client) => {
-            const property = primaryProperty(client);
+            const property = client.primaryProperty;
             const cityUf = property
               ? `${property.city}/${property.state}`
               : '—';

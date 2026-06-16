@@ -1,6 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { JwtPayload } from '../auth/auth.types';
+import { clientOwnerScope } from '../common/client-owner-scope.util';
 import { GeoService } from '../geo/geo.service';
 import { PrismaService } from '../prisma/prisma.service';
 
@@ -58,6 +59,7 @@ export class ClientAnalyticsService {
         tenantId: user.tenantId,
         deletedAt: null,
         isDefault: false,
+        ...clientOwnerScope(user),
       },
       include: analyticsInclude,
     });

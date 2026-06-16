@@ -8,11 +8,12 @@ import type { Client } from '@/types/client';
 interface Props {
   open: boolean;
   client: Client | null;
+  loading?: boolean;
   onClose: () => void;
   onSaved: () => void;
 }
 
-export function ClientFormDrawer({ open, client, onClose, onSaved }: Props) {
+export function ClientFormDrawer({ open, client, loading = false, onClose, onSaved }: Props) {
   useEffect(() => {
     if (!open) return;
 
@@ -55,18 +56,24 @@ export function ClientFormDrawer({ open, client, onClose, onSaved }: Props) {
 
         <div className="client-drawer-body">
           <div className="client-drawer-inner">
-            <ClientForm
-              client={client}
-              onSaved={handleSaved}
-              onClear={onClose}
-              showNewButton={false}
-              hideTitle
-            />
-
-            {client ? (
-              <ClientFormLinksPanel clientId={client.id} />
+            {loading ? (
+              <p style={{ padding: '1rem 0' }}>Carregando cliente…</p>
             ) : (
-              <ClientFormLinksPanel showStaticLink />
+              <>
+                <ClientForm
+                  client={client}
+                  onSaved={handleSaved}
+                  onClear={onClose}
+                  showNewButton={false}
+                  hideTitle
+                />
+
+                {client ? (
+                  <ClientFormLinksPanel clientId={client.id} />
+                ) : (
+                  <ClientFormLinksPanel showStaticLink />
+                )}
+              </>
             )}
           </div>
         </div>
